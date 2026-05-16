@@ -10,7 +10,9 @@ import SwiftUI
 
 struct ContentView: View {
     @Query(sort: \Match.playedAt, order: .reverse) private var matches: [Match]
-    @State private var isShowingCreateMatchPlaceholder = false
+    @Query private var teams: [Team]
+    @Query private var tournaments: [Tournament]
+    @State private var isShowingCreateMatch = false
 
     var body: some View {
         NavigationStack {
@@ -23,7 +25,12 @@ struct ContentView: View {
                     )
                 } else {
                     List(matches) { match in
-                        MatchRow(match: match)
+                        MatchRow(
+                            match: match,
+                            tournamentName: tournamentName(for: match),
+                            homeTeamName: teamName(for: match.homeTeamID),
+                            awayTeamName: teamName(for: match.awayTeamID)
+                        )
                     }
                 }
             }
@@ -39,44 +46,43 @@ struct ContentView: View {
 
                 ToolbarItem(placement: .topBarTrailing) {
                     Button {
-                        isShowingCreateMatchPlaceholder = true
+                        isShowingCreateMatch = true
                     } label: {
                         Image(systemName: "plus")
                     }
                     .accessibilityLabel("試合を追加")
                 }
             }
-            .sheet(isPresented: $isShowingCreateMatchPlaceholder) {
+            .sheet(isPresented: $isShowingCreateMatch) {
                 NavigationStack {
-                    ContentUnavailableView(
-                        "試合作成はステップ4で作ります",
-                        systemImage: "plus.app",
-                        description: Text("今は一覧画面の入口だけを用意しています。")
-                    )
-                    .navigationTitle("試合をつくる")
-                    .toolbar {
-                        ToolbarItem(placement: .topBarTrailing) {
-                            Button("閉じる") {
-                                isShowingCreateMatchPlaceholder = false
-                            }
-                        }
-                    }
+                    CreateMatchView()
                 }
             }
         }
+    }
+
+    private func teamName(for id: UUID) -> String {
+        teams.first { $0.id == id }?.name ?? "チーム未設定"
+    }
+
+    private func tournamentName(for match: Match) -> String {
+        tournaments.first { $0.id == match.tournamentID }?.officialName ?? "大会未設定"
     }
 }
 
 private struct MatchRow: View {
     let match: Match
+    let tournamentName: String
+    let homeTeamName: String
+    let awayTeamName: String
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text("チーム未設定 vs チーム未設定")
+            Text("\(homeTeamName) vs \(awayTeamName)")
                 .font(.headline)
 
             HStack {
-                Text("大会未設定")
+                Text(tournamentName)
                 Spacer()
                 Text(match.playedAt, style: .date)
             }

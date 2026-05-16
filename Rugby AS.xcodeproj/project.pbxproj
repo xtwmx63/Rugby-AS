@@ -9,11 +9,13 @@
 /* Begin PBXBuildFile section */
 		CB170E442FB8ECE7006E7CFC /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = CB170E432FB8ECE7006E7CFC /* Models.swift */; };
 		CB170E462FB8EEB3006E7CFC /* TeamViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = CB170E452FB8EEB3006E7CFC /* TeamViews.swift */; };
+		CB170E482FB8EF84006E7CFC /* CreateMatchView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CB170E472FB8EF84006E7CFC /* CreateMatchView.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
 		CB170E432FB8ECE7006E7CFC /* Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
 		CB170E452FB8EEB3006E7CFC /* TeamViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TeamViews.swift; sourceTree = "<group>"; };
+		CB170E472FB8EF84006E7CFC /* CreateMatchView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CreateMatchView.swift; sourceTree = "<group>"; };
 		CBF67CA62FB8E34C006E5EC5 /* Rugby AS.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "Rugby AS.app"; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
@@ -43,6 +45,7 @@
 				CBF67CA72FB8E34C006E5EC5 /* Products */,
 				CB170E432FB8ECE7006E7CFC /* Models.swift */,
 				CB170E452FB8EEB3006E7CFC /* TeamViews.swift */,
+				CB170E472FB8EF84006E7CFC /* CreateMatchView.swift */,
 			);
 			sourceTree = "<group>";
 		};
@@ -128,6 +131,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				CB170E482FB8EF84006E7CFC /* CreateMatchView.swift in Sources */,
 				CB170E442FB8ECE7006E7CFC /* Models.swift in Sources */,
 				CB170E462FB8EEB3006E7CFC /* TeamViews.swift in Sources */,
 			);
