@@ -29,6 +29,14 @@ struct ContentView: View {
             }
             .navigationTitle("試合一覧")
             .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    NavigationLink {
+                        TeamListView()
+                    } label: {
+                        Label("チーム", systemImage: "person.3")
+                    }
+                }
+
                 ToolbarItem(placement: .topBarTrailing) {
                     Button {
                         isShowingCreateMatchPlaceholder = true
