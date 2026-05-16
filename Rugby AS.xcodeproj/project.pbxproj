@@ -12,6 +12,7 @@
 		CB170E482FB8EF84006E7CFC /* CreateMatchView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CB170E472FB8EF84006E7CFC /* CreateMatchView.swift */; };
 		CB170E4A2FB8F18B006E7CFC /* PlayerSelectionSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = CB170E492FB8F18B006E7CFC /* PlayerSelectionSheet.swift */; };
 		CB170E4C2FB8F1C6006E7CFC /* RecordingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CB170E4B2FB8F1C6006E7CFC /* RecordingView.swift */; };
+		CB170E4E2FB8F514006E7CFC /* MatchSummaryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CB170E4D2FB8F514006E7CFC /* MatchSummaryView.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -20,6 +21,7 @@
 		CB170E472FB8EF84006E7CFC /* CreateMatchView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CreateMatchView.swift; sourceTree = "<group>"; };
 		CB170E492FB8F18B006E7CFC /* PlayerSelectionSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlayerSelectionSheet.swift; sourceTree = "<group>"; };
 		CB170E4B2FB8F1C6006E7CFC /* RecordingView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecordingView.swift; sourceTree = "<group>"; };
+		CB170E4D2FB8F514006E7CFC /* MatchSummaryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MatchSummaryView.swift; sourceTree = "<group>"; };
 		CBF67CA62FB8E34C006E5EC5 /* Rugby AS.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "Rugby AS.app"; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
@@ -52,6 +54,7 @@
 				CB170E472FB8EF84006E7CFC /* CreateMatchView.swift */,
 				CB170E492FB8F18B006E7CFC /* PlayerSelectionSheet.swift */,
 				CB170E4B2FB8F1C6006E7CFC /* RecordingView.swift */,
+				CB170E4D2FB8F514006E7CFC /* MatchSummaryView.swift */,
 			);
 			sourceTree = "<group>";
 		};
@@ -142,6 +145,7 @@
 				CB170E4C2FB8F1C6006E7CFC /* RecordingView.swift in Sources */,
 				CB170E4A2FB8F18B006E7CFC /* PlayerSelectionSheet.swift in Sources */,
 				CB170E462FB8EEB3006E7CFC /* TeamViews.swift in Sources */,
+				CB170E4E2FB8F514006E7CFC /* MatchSummaryView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

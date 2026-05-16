@@ -27,7 +27,11 @@ struct ContentView: View {
                 } else {
                     List(matches) { match in
                         NavigationLink {
-                            RecordingView(match: match)
+                            if isFinished(match) {
+                                MatchSummaryView(match: match)
+                            } else {
+                                RecordingView(match: match)
+                            }
                         } label: {
                             MatchRow(
                                 match: match,
