@@ -12,6 +12,7 @@ struct ContentView: View {
     @Query(sort: \Match.playedAt, order: .reverse) private var matches: [Match]
     @Query private var teams: [Team]
     @Query private var tournaments: [Tournament]
+    @Query private var events: [StatEvent]
     @State private var isShowingCreateMatch = false
 
     var body: some View {
@@ -25,12 +26,17 @@ struct ContentView: View {
                     )
                 } else {
                     List(matches) { match in
-                        MatchRow(
-                            match: match,
-                            tournamentName: tournamentName(for: match),
-                            homeTeamName: teamName(for: match.homeTeamID),
-                            awayTeamName: teamName(for: match.awayTeamID)
-                        )
+                        NavigationLink {
+                            RecordingView(match: match)
+                        } label: {
+                            MatchRow(
+                                match: match,
+                                tournamentName: tournamentName(for: match),
+                                homeTeamName: teamName(for: match.homeTeamID),
+                                awayTeamName: teamName(for: match.awayTeamID),
+                                isFinished: isFinished(match)
+                            )
+                        }
                     }
                 }
             }
@@ -68,6 +74,12 @@ struct ContentView: View {
     private func tournamentName(for match: Match) -> String {
         tournaments.first { $0.id == match.tournamentID }?.officialName ?? "大会未設定"
     }
+
+    private func isFinished(_ match: Match) -> Bool {
+        events.contains { event in
+            event.matchID == match.id && event.category == "match_state" && event.outcome == "finished"
+        }
+    }
 }
 
 private struct MatchRow: View {
@@ -75,6 +87,7 @@ private struct MatchRow: View {
     let tournamentName: String
     let homeTeamName: String
     let awayTeamName: String
+    let isFinished: Bool
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -89,9 +102,9 @@ private struct MatchRow: View {
             .font(.subheadline)
             .foregroundStyle(.secondary)
 
-            Text("記録中")
+            Text(isFinished ? "終了" : "記録中")
                 .font(.caption)
-                .foregroundStyle(.blue)
+                .foregroundStyle(isFinished ? Color.secondary : Color.blue)
         }
         .padding(.vertical, 4)
     }

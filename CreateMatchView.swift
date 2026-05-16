@@ -26,7 +26,7 @@ struct CreateMatchView: View {
     @State private var playedAt = Date()
     @State private var alertTitle = ""
     @State private var alertMessage: String?
-    @State private var shouldDismissAfterAlert = false
+    @State private var recordingMatch: Match?
 
     var body: some View {
         Form {
@@ -91,13 +91,12 @@ struct CreateMatchView: View {
             }
         }
         .alert(alertTitle, isPresented: alertBinding) {
-            Button("OK", role: .cancel) {
-                if shouldDismissAfterAlert {
-                    dismiss()
-                }
-            }
+            Button("OK", role: .cancel) {}
         } message: {
             Text(alertMessage ?? "入力内容を確認してください。")
+        }
+        .navigationDestination(item: $recordingMatch) { match in
+            RecordingView(match: match)
         }
     }
 
@@ -130,7 +129,6 @@ struct CreateMatchView: View {
             set: { isPresented in
                 if !isPresented {
                     alertMessage = nil
-                    shouldDismissAfterAlert = false
                 }
             }
         )
@@ -163,8 +161,7 @@ struct CreateMatchView: View {
         do {
             try modelContext.save()
             if shouldStartRecording {
-                shouldDismissAfterAlert = true
-                showAlert(title: "保存しました", message: "記録画面はステップ5で作ります。")
+                recordingMatch = match
             } else {
                 dismiss()
             }
