@@ -113,7 +113,12 @@ struct ContentView: View {
     }
 
     private func deleteMatch(_ match: Match) {
-        // 段階2: Match のみ削除。紐づく StatEvent は段階3 で連鎖削除する。
+        // SwiftData の @Relationship は未定義のため、StatEvent は自動カスケード削除されない。
+        // 孤児を残さないよう、紐づく StatEvent を明示的に全削除してから Match を削除する。
+        let relatedEvents = events.filter { $0.matchID == match.id }
+        for event in relatedEvents {
+            modelContext.delete(event)
+        }
         modelContext.delete(match)
         try? modelContext.save()
     }
