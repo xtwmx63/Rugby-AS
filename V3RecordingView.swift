@@ -9,6 +9,7 @@ import SwiftData
 import SwiftUI
 
 struct V3RecordingView: View {
+    @Environment(\.modelContext) private var modelContext
     @Query private var teams: [Team]
 
     let match: Match
@@ -125,10 +126,8 @@ struct V3RecordingView: View {
     private func toggleTime() {
         let now = Date()
         if timeState.isRunning {
-            timeState.stop(at: now)
-            bipState.stop(at: now)
-            team1State.stop(at: now)
-            team2State.stop(at: now)
+            stopBIPAndTeams(at: now)
+            _ = timeState.stop(at: now)
         } else {
             timeState.start(at: now)
         }
@@ -138,9 +137,7 @@ struct V3RecordingView: View {
         guard timeState.isRunning else { return }
         let now = Date()
         if bipState.isRunning {
-            bipState.stop(at: now)
-            team1State.stop(at: now)
-            team2State.stop(at: now)
+            stopBIPAndTeams(at: now)
         } else {
             bipState.start(at: now)
         }
@@ -150,9 +147,9 @@ struct V3RecordingView: View {
         let now = Date()
         ensureTimeAndBIPRunning(at: now)
         if team1State.isRunning {
-            team1State.stop(at: now)
+            stopTeam1(at: now)
         } else {
-            team2State.stop(at: now)
+            stopTeam2(at: now)
             team1State.start(at: now)
         }
     }
@@ -161,9 +158,9 @@ struct V3RecordingView: View {
         let now = Date()
         ensureTimeAndBIPRunning(at: now)
         if team2State.isRunning {
-            team2State.stop(at: now)
+            stopTeam2(at: now)
         } else {
-            team1State.stop(at: now)
+            stopTeam1(at: now)
             team2State.start(at: now)
         }
     }
@@ -171,6 +168,40 @@ struct V3RecordingView: View {
     private func ensureTimeAndBIPRunning(at date: Date) {
         timeState.start(at: date)
         bipState.start(at: date)
+    }
+
+    private func stopBIPAndTeams(at date: Date) {
+        stopTeam1(at: date)
+        stopTeam2(at: date)
+        if let seconds = bipState.stop(at: date) {
+            savePossessionEvent(teamID: nil, outcome: "none", seconds: seconds)
+        }
+    }
+
+    private func stopTeam1(at date: Date) {
+        if let seconds = team1State.stop(at: date) {
+            savePossessionEvent(teamID: match.homeTeamID, outcome: "own", seconds: seconds)
+        }
+    }
+
+    private func stopTeam2(at date: Date) {
+        if let seconds = team2State.stop(at: date) {
+            savePossessionEvent(teamID: match.awayTeamID, outcome: "own", seconds: seconds)
+        }
+    }
+
+    private func savePossessionEvent(teamID: UUID?, outcome: String, seconds: Int) {
+        guard seconds > 0 else { return }
+
+        let event = StatEvent(
+            matchID: match.id,
+            teamID: teamID,
+            category: "possession",
+            outcome: outcome,
+            seconds: seconds
+        )
+        modelContext.insert(event)
+        try? modelContext.save()
     }
 
     private func teamName(for id: UUID) -> String {
@@ -188,7 +219,7 @@ private struct V3TimerState {
 
     mutating func toggle(at date: Date) {
         if isRunning {
-            stop(at: date)
+            _ = stop(at: date)
         } else {
             start(at: date)
         }
@@ -199,10 +230,12 @@ private struct V3TimerState {
         startedAt = date
     }
 
-    mutating func stop(at date: Date) {
-        guard isRunning else { return }
-        accumulatedSeconds = elapsedSeconds(at: date)
-        startedAt = nil
+    mutating func stop(at date: Date) -> Int? {
+        guard let startedAt else { return nil }
+        let intervalSeconds = max(0, Int(date.timeIntervalSince(startedAt)))
+        accumulatedSeconds += intervalSeconds
+        self.startedAt = nil
+        return intervalSeconds
     }
 
     func elapsedText(at date: Date) -> String {
