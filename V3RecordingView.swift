@@ -29,6 +29,10 @@ struct V3RecordingView: View {
         matchEvents.filter { ScoringCategory(rawValue: $0.category) != nil }
     }
 
+    private var setPieceEvents: [StatEvent] {
+        matchEvents.filter { $0.category == "lineout" || $0.category == "scrum" }
+    }
+
     private var selectedInputTeam: UUID {
         selectedInputTeamID ?? match.homeTeamID
     }
@@ -88,8 +92,9 @@ struct V3RecordingView: View {
 
                 inputTeamSection
                 scoringSection
+                setPieceSection
 
-                Text("V3時間機能はそのままに、得点入力を合流しています。")
+                Text("V3時間機能はそのままに、得点とセットプレー入力を合流しています。")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
@@ -116,7 +121,7 @@ struct V3RecordingView: View {
             }
             .pickerStyle(.segmented)
 
-            Text("得点は \(teamName(for: selectedInputTeam)) の記録として保存します。")
+            Text("得点とセットプレーは \(teamName(for: selectedInputTeam)) の記録として保存します。")
                 .font(.footnote)
                 .foregroundStyle(.secondary)
         }
@@ -134,6 +139,30 @@ struct V3RecordingView: View {
                 scoringButton(.penaltyGoal)
                 scoringButton(.dropGoal)
             }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var setPieceSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("セットプレー")
+                .font(.headline)
+
+            V3SetPieceControl(
+                title: "ラインアウト",
+                category: "lineout",
+                events: setPieceEvents,
+                selectedTeamID: selectedInputTeam,
+                onRecord: recordSetPiece
+            )
+
+            V3SetPieceControl(
+                title: "スクラム",
+                category: "scrum",
+                events: setPieceEvents,
+                selectedTeamID: selectedInputTeam,
+                onRecord: recordSetPiece
+            )
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
@@ -283,6 +312,18 @@ struct V3RecordingView: View {
         scoreEvents.filter { $0.category == category && $0.teamID == selectedInputTeam }.count
     }
 
+    private func recordSetPiece(category: String, outcome: String) {
+        let event = StatEvent(
+            matchID: match.id,
+            teamID: selectedInputTeam,
+            category: category,
+            outcome: outcome,
+            seconds: timeState.elapsedSeconds(at: Date())
+        )
+        modelContext.insert(event)
+        try? modelContext.save()
+    }
+
     private func savePossessionEvent(teamID: UUID?, outcome: String, seconds: Int) {
         guard seconds > 0 else { return }
 
@@ -299,6 +340,54 @@ struct V3RecordingView: View {
 
     private func teamName(for id: UUID) -> String {
         teams.first { $0.id == id }?.name ?? "チーム未設定"
+    }
+}
+
+private struct V3SetPieceControl: View {
+    let title: String
+    let category: String
+    let events: [StatEvent]
+    let selectedTeamID: UUID
+    let onRecord: (String, String) -> Void
+
+    private var selectedEvents: [StatEvent] {
+        events.filter { $0.category == category && $0.teamID == selectedTeamID }
+    }
+
+    private var successfulCount: Int {
+        selectedEvents.filter { $0.outcome == "success" }.count
+    }
+
+    private var totalCount: Int {
+        selectedEvents.count
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text(title)
+                    .font(.subheadline.weight(.semibold))
+                Spacer()
+                Text("\(successfulCount)/\(totalCount)")
+                    .font(.subheadline.monospacedDigit())
+                    .foregroundStyle(.secondary)
+            }
+
+            HStack(spacing: 12) {
+                Button("成功") {
+                    onRecord(category, "success")
+                }
+                .frame(maxWidth: .infinity, minHeight: 44)
+                .buttonStyle(.borderedProminent)
+
+                Button("失敗") {
+                    onRecord(category, "fail")
+                }
+                .frame(maxWidth: .infinity, minHeight: 44)
+                .buttonStyle(.bordered)
+            }
+        }
+        .padding(.vertical, 4)
     }
 }
 
