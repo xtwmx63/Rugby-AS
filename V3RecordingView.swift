@@ -11,6 +11,7 @@ import SwiftUI
 struct V3RecordingView: View {
     @Environment(\.modelContext) private var modelContext
     @Query private var teams: [Team]
+    @Query private var allEvents: [StatEvent]
 
     let match: Match
 
@@ -18,6 +19,26 @@ struct V3RecordingView: View {
     @State private var bipState = V3TimerState()
     @State private var team1State = V3TimerState()
     @State private var team2State = V3TimerState()
+    @State private var selectedInputTeamID: UUID?
+
+    private var matchEvents: [StatEvent] {
+        allEvents.filter { $0.matchID == match.id }
+    }
+
+    private var scoreEvents: [StatEvent] {
+        matchEvents.filter { ScoringCategory(rawValue: $0.category) != nil }
+    }
+
+    private var selectedInputTeam: UUID {
+        selectedInputTeamID ?? match.homeTeamID
+    }
+
+    private var inputTeamSelection: Binding<UUID> {
+        Binding(
+            get: { selectedInputTeam },
+            set: { selectedInputTeamID = $0 }
+        )
+    }
 
     var body: some View {
         ScrollView {
@@ -65,7 +86,10 @@ struct V3RecordingView: View {
                     )
                 }
 
-                Text("段階3-1: Team1/Team2 を追加。どちらかを開始すると、もう片方は停止します。")
+                inputTeamSection
+                scoringSection
+
+                Text("V3時間機能はそのままに、得点入力を合流しています。")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
@@ -74,6 +98,44 @@ struct V3RecordingView: View {
         }
         .navigationTitle("V3 記録")
         .navigationBarTitleDisplayMode(.inline)
+        .onAppear {
+            if selectedInputTeamID == nil {
+                selectedInputTeamID = match.homeTeamID
+            }
+        }
+    }
+
+    private var inputTeamSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("入力対象")
+                .font(.headline)
+
+            Picker("入力対象", selection: inputTeamSelection) {
+                Text(teamName(for: match.homeTeamID)).tag(match.homeTeamID)
+                Text(teamName(for: match.awayTeamID)).tag(match.awayTeamID)
+            }
+            .pickerStyle(.segmented)
+
+            Text("得点は \(teamName(for: selectedInputTeam)) の記録として保存します。")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var scoringSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("得点")
+                .font(.headline)
+
+            LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 12) {
+                scoringButton(.tryScore)
+                scoringButton(.conversion)
+                scoringButton(.penaltyGoal)
+                scoringButton(.dropGoal)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private func timerPanel(title: String, state: V3TimerState, fontSize: CGFloat) -> some View {
@@ -88,6 +150,21 @@ struct V3RecordingView: View {
                     .frame(maxWidth: .infinity)
             }
         }
+    }
+
+    private func scoringButton(_ category: ScoringCategory) -> some View {
+        Button {
+            recordScore(category)
+        } label: {
+            VStack(spacing: 4) {
+                Text(category.displayName)
+                    .font(.headline)
+                Text("\(countEvents(category: category.rawValue))")
+                    .font(.title3.monospacedDigit())
+            }
+            .frame(maxWidth: .infinity, minHeight: 72)
+        }
+        .buttonStyle(.borderedProminent)
     }
 
     private func teamTimerPanel(
@@ -190,6 +267,22 @@ struct V3RecordingView: View {
         }
     }
 
+    private func recordScore(_ category: ScoringCategory) {
+        let event = StatEvent(
+            matchID: match.id,
+            teamID: selectedInputTeam,
+            category: category.rawValue,
+            outcome: "success",
+            seconds: timeState.elapsedSeconds(at: Date())
+        )
+        modelContext.insert(event)
+        try? modelContext.save()
+    }
+
+    private func countEvents(category: String) -> Int {
+        scoreEvents.filter { $0.category == category && $0.teamID == selectedInputTeam }.count
+    }
+
     private func savePossessionEvent(teamID: UUID?, outcome: String, seconds: Int) {
         guard seconds > 0 else { return }
 
@@ -243,7 +336,7 @@ private struct V3TimerState {
         return String(format: "%02d:%02d", seconds / 60, seconds % 60)
     }
 
-    private func elapsedSeconds(at date: Date) -> Int {
+    func elapsedSeconds(at date: Date) -> Int {
         guard let startedAt else {
             return accumulatedSeconds
         }
