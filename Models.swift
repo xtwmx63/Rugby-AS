@@ -77,6 +77,8 @@ final class StatEvent {
     var category: String
     var outcome: String
     var seconds: Int
+    // 0 = 前半, 1 = 後半。既存データは default 0（前半）として扱う。
+    var half: Int = 0
 
     init(
         id: UUID = UUID(),
@@ -85,7 +87,8 @@ final class StatEvent {
         playerID: UUID? = nil,
         category: String,
         outcome: String,
-        seconds: Int
+        seconds: Int,
+        half: Int = 0
     ) {
         self.id = id
         self.matchID = matchID
@@ -94,6 +97,7 @@ final class StatEvent {
         self.category = category
         self.outcome = outcome
         self.seconds = seconds
+        self.half = half
     }
 }
 

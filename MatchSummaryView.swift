@@ -40,7 +40,7 @@ struct MatchSummaryView: View {
     private var scoringEvents: [StatEvent] {
         matchEvents
             .filter { ScoringCategory(rawValue: $0.category) != nil }
-            .sorted { $0.seconds < $1.seconds }
+            .sorted { ($0.half, $0.seconds) < ($1.half, $1.seconds) }
     }
 
     private var setPieceEvents: [StatEvent] {
@@ -144,9 +144,14 @@ struct MatchSummaryView: View {
                         scoringEventForPlayerSelection = event
                     } label: {
                         HStack(spacing: 12) {
-                            Text(timeText(event.seconds))
-                                .font(.body.monospacedDigit())
-                                .frame(width: 54, alignment: .leading)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(halfLabel(event.half))
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                                Text(timeText(event.seconds))
+                                    .font(.body.monospacedDigit())
+                            }
+                            .frame(width: 60, alignment: .leading)
 
                             VStack(alignment: .leading, spacing: 3) {
                                 Text(scoringName(event.category))
@@ -297,6 +302,10 @@ struct MatchSummaryView: View {
 
     private func timeText(_ seconds: Int) -> String {
         String(format: "%02d:%02d", seconds / 60, seconds % 60)
+    }
+
+    private func halfLabel(_ half: Int) -> String {
+        half >= 1 ? "後半" : "前半"
     }
 
     private func deleteEvent(_ event: StatEvent) {

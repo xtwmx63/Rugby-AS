@@ -58,10 +58,17 @@ struct V3RecordingView: View {
 
     // 取り消し対象は「直前に手動で記録した1件」= 得点・セットプレーのうち最新。
     // ポゼッションは V3 のタイマー連動で自動保存されるため、ここでは触れない。
+    // 現在の半分（前半=0, 後半=1）。StatEvent.half に保存する値。
+    private var currentHalf: Int {
+        isSecondHalf ? 1 : 0
+    }
+
+    // 取り消し対象は (half, seconds) の組で最大、つまり「最新の手動記録」。
+    // 後半でも前半の seconds が大きい場合に誤って前半側を取らないよう半分で先に比較する。
     private var undoableLastEvent: StatEvent? {
         matchEvents
             .filter { $0.category != "possession" }
-            .sorted { $0.seconds > $1.seconds }
+            .sorted { ($0.half, $0.seconds) > ($1.half, $1.seconds) }
             .first
     }
 
@@ -155,7 +162,8 @@ struct V3RecordingView: View {
             teamID: nil,
             category: "match_state",
             outcome: "finished",
-            seconds: timeState.elapsedSeconds(at: Date())
+            seconds: timeState.elapsedSeconds(at: Date()),
+            half: currentHalf
         )
         modelContext.insert(marker)
         try? modelContext.save()
@@ -440,7 +448,8 @@ struct V3RecordingView: View {
             teamID: selectedInputTeam,
             category: category.rawValue,
             outcome: "success",
-            seconds: timeState.elapsedSeconds(at: Date())
+            seconds: timeState.elapsedSeconds(at: Date()),
+            half: currentHalf
         )
         modelContext.insert(event)
         try? modelContext.save()
@@ -457,7 +466,8 @@ struct V3RecordingView: View {
             teamID: selectedInputTeam,
             category: category,
             outcome: outcome,
-            seconds: timeState.elapsedSeconds(at: Date())
+            seconds: timeState.elapsedSeconds(at: Date()),
+            half: currentHalf
         )
         modelContext.insert(event)
         try? modelContext.save()
@@ -471,7 +481,8 @@ struct V3RecordingView: View {
             teamID: teamID,
             category: "possession",
             outcome: outcome,
-            seconds: seconds
+            seconds: seconds,
+            half: currentHalf
         )
         modelContext.insert(event)
         try? modelContext.save()
