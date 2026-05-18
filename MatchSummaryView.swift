@@ -75,38 +75,40 @@ struct MatchSummaryView: View {
 
     private var possessionSection: some View {
         Section("ポゼッション") {
-            let ownSeconds = possessionSeconds(outcome: "own")
-            let opponentSeconds = possessionSeconds(outcome: "opponent")
-            let totalSeconds = ownSeconds + opponentSeconds
-            let ownRatio = totalSeconds == 0 ? 0 : Double(ownSeconds) / Double(totalSeconds)
-            let opponentRatio = totalSeconds == 0 ? 0 : Double(opponentSeconds) / Double(totalSeconds)
+            let homeSeconds = possessionSeconds(teamID: match.homeTeamID)
+            let awaySeconds = possessionSeconds(teamID: match.awayTeamID)
+            let bipSeconds = bipTotalSeconds(homeSeconds: homeSeconds, awaySeconds: awaySeconds)
+            let homeRatio = bipSeconds == 0 ? 0 : Double(homeSeconds) / Double(bipSeconds)
+            let awayRatio = bipSeconds == 0 ? 0 : Double(awaySeconds) / Double(bipSeconds)
+            let unclaimedRatio = max(0, 1 - homeRatio - awayRatio)
 
             VStack(alignment: .leading, spacing: 10) {
-                HStack {
-                    Text("自チーム")
-                    Spacer()
-                    Text(percentText(ownRatio))
-                        .font(.body.monospacedDigit())
-                }
+                possessionRow(teamID: match.homeTeamID, seconds: homeSeconds, ratio: homeRatio)
 
                 GeometryReader { proxy in
                     HStack(spacing: 0) {
                         Rectangle()
                             .fill(.blue)
-                            .frame(width: proxy.size.width * ownRatio)
+                            .frame(width: proxy.size.width * homeRatio)
+                        Rectangle()
+                            .fill(.green)
+                            .frame(width: proxy.size.width * awayRatio)
                         Rectangle()
                             .fill(.gray.opacity(0.35))
-                            .frame(width: proxy.size.width * opponentRatio)
+                            .frame(width: proxy.size.width * unclaimedRatio)
                     }
                     .clipShape(RoundedRectangle(cornerRadius: 4))
                 }
                 .frame(height: 14)
 
+                possessionRow(teamID: match.awayTeamID, seconds: awaySeconds, ratio: awayRatio)
+
                 HStack {
-                    Text("相手")
+                    Text("BIP合計")
                     Spacer()
-                    Text(percentText(opponentRatio))
+                    Text(timeText(bipSeconds))
                         .font(.body.monospacedDigit())
+                        .foregroundStyle(.secondary)
                 }
             }
         }
@@ -195,6 +197,15 @@ struct MatchSummaryView: View {
         }
     }
 
+    private func possessionRow(teamID: UUID, seconds: Int, ratio: Double) -> some View {
+        HStack {
+            Text(teamName(for: teamID))
+            Spacer()
+            Text("\(percentText(ratio)) / \(timeText(seconds))")
+                .font(.body.monospacedDigit())
+        }
+    }
+
     private func setPieceRow(title: String, category: String) -> some View {
         let events = setPieceEvents.filter { $0.category == category }
         let successCount = events.filter { $0.outcome == "success" }.count
@@ -212,10 +223,36 @@ struct MatchSummaryView: View {
         }
     }
 
-    private func possessionSeconds(outcome: String) -> Int {
-        possessionEvents
-            .filter { $0.outcome == outcome }
+    private func possessionSeconds(teamID: UUID) -> Int {
+        let teamOwnedSeconds = possessionEvents
+            .filter { $0.teamID == teamID }
             .reduce(0) { $0 + $1.seconds }
+
+        if teamOwnedSeconds > 0 {
+            return teamOwnedSeconds
+        }
+
+        if teamID == match.homeTeamID {
+            return possessionEvents
+                .filter { $0.teamID == nil && $0.outcome == "own" }
+                .reduce(0) { $0 + $1.seconds }
+        }
+
+        return possessionEvents
+            .filter { $0.teamID == nil && $0.outcome == "opponent" }
+            .reduce(0) { $0 + $1.seconds }
+    }
+
+    private func bipTotalSeconds(homeSeconds: Int, awaySeconds: Int) -> Int {
+        let recordedBIPSeconds = possessionEvents
+            .filter { $0.outcome == "none" }
+            .reduce(0) { $0 + $1.seconds }
+
+        if recordedBIPSeconds > 0 {
+            return recordedBIPSeconds
+        }
+
+        return homeSeconds + awaySeconds
     }
 
     private func countScoring(_ category: ScoringCategory) -> Int {
