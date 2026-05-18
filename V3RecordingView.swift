@@ -115,7 +115,6 @@ struct V3RecordingView: View {
                     .frame(maxWidth: .infinity, minHeight: 44)
             }
             .buttonStyle(.borderedProminent)
-            .disabled(!bipState.isRunning)
         }
         .frame(maxWidth: .infinity)
         .padding(10)
@@ -148,8 +147,8 @@ struct V3RecordingView: View {
     }
 
     private func toggleTeam1() {
-        guard bipState.isRunning else { return }
         let now = Date()
+        ensureTimeAndBIPRunning(at: now)
         if team1State.isRunning {
             team1State.stop(at: now)
         } else {
@@ -159,14 +158,19 @@ struct V3RecordingView: View {
     }
 
     private func toggleTeam2() {
-        guard bipState.isRunning else { return }
         let now = Date()
+        ensureTimeAndBIPRunning(at: now)
         if team2State.isRunning {
             team2State.stop(at: now)
         } else {
             team1State.stop(at: now)
             team2State.start(at: now)
         }
+    }
+
+    private func ensureTimeAndBIPRunning(at date: Date) {
+        timeState.start(at: date)
+        bipState.start(at: date)
     }
 
     private func teamName(for id: UUID) -> String {
