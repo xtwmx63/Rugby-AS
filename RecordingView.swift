@@ -17,6 +17,7 @@ struct RecordingView: View {
     let match: Match
 
     @State private var recordingStartedAt = Date()
+    @State private var timeControlState = TimeControlState.notStarted
     @State private var selectedHalf = "前半"
     @State private var currentPossession: PossessionSide?
     @State private var possessionStartedAt: Date?
@@ -104,6 +105,30 @@ struct RecordingView: View {
                 }
             }
             .pickerStyle(.segmented)
+
+            timeControlButtons
+        }
+    }
+
+    private var timeControlButtons: some View {
+        HStack(spacing: 12) {
+            Button("開始") {
+                timeControlState = .running
+            }
+            .buttonStyle(.borderedProminent)
+            .disabled(timeControlState != .notStarted)
+
+            Button("一時停止") {
+                timeControlState = .paused
+            }
+            .buttonStyle(.bordered)
+            .disabled(timeControlState != .running)
+
+            Button("再開") {
+                timeControlState = .running
+            }
+            .buttonStyle(.borderedProminent)
+            .disabled(timeControlState != .paused)
         }
     }
 
@@ -294,6 +319,12 @@ struct RecordingView: View {
         let seconds = max(0, Int(date.timeIntervalSince(recordingStartedAt)))
         return String(format: "%02d:%02d", seconds / 60, seconds % 60)
     }
+}
+
+private enum TimeControlState {
+    case notStarted
+    case running
+    case paused
 }
 
 private enum PossessionSide: String {
