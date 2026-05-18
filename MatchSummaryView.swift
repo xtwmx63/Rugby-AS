@@ -12,6 +12,7 @@ struct MatchSummaryView: View {
     @Environment(\.modelContext) private var modelContext
     @Query(sort: \Player.number) private var allPlayers: [Player]
     @Query private var allEvents: [StatEvent]
+    @Query private var teams: [Team]
 
     let match: Match
 
@@ -118,13 +119,8 @@ struct MatchSummaryView: View {
             scoringSummaryRow(.penaltyGoal)
             scoringSummaryRow(.dropGoal)
 
-            HStack {
-                Text("合計")
-                    .font(.headline)
-                Spacer()
-                Text("\(totalScore)点")
-                    .font(.headline.monospacedDigit())
-            }
+            scoreRow(teamID: match.homeTeamID)
+            scoreRow(teamID: match.awayTeamID)
         }
     }
 
@@ -172,10 +168,22 @@ struct MatchSummaryView: View {
         }
     }
 
-    private var totalScore: Int {
-        scoringEvents.reduce(0) { partialResult, event in
-            partialResult + scoreValue(for: event.category)
+    private func scoreRow(teamID: UUID) -> some View {
+        HStack {
+            Text(teamName(for: teamID))
+                .font(.headline)
+            Spacer()
+            Text("\(score(for: teamID))点")
+                .font(.headline.monospacedDigit())
         }
+    }
+
+    private func score(for teamID: UUID) -> Int {
+        scoringEvents
+            .filter { $0.teamID == teamID }
+            .reduce(0) { partialResult, event in
+                partialResult + scoreValue(for: event.category)
+            }
     }
 
     private func scoringSummaryRow(_ category: ScoringCategory) -> some View {
@@ -218,11 +226,17 @@ struct MatchSummaryView: View {
         switch ScoringCategory(rawValue: category) {
         case .tryScore:
             return 5
-        case .conversion, .penaltyGoal, .dropGoal:
-            return category == ScoringCategory.conversion.rawValue ? 2 : 3
+        case .conversion:
+            return 2
+        case .penaltyGoal, .dropGoal:
+            return 3
         case nil:
             return 0
         }
+    }
+
+    private func teamName(for id: UUID) -> String {
+        teams.first { $0.id == id }?.name ?? "チーム未設定"
     }
 
     private func scoringName(_ category: String) -> String {

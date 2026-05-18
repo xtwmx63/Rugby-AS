@@ -69,6 +69,7 @@ struct RecordingView: View {
         ScrollView {
             VStack(spacing: 18) {
                 header
+                currentScoreSection
                 recordingTeamSection
                 possessionSection
                 scoringSection
@@ -125,6 +126,26 @@ struct RecordingView: View {
             .pickerStyle(.segmented)
 
             timeControlButtons
+        }
+    }
+
+    private var currentScoreSection: some View {
+        HStack(spacing: 12) {
+            ScorePanel(
+                teamName: teamName(for: match.homeTeamID),
+                score: score(for: match.homeTeamID),
+                isSelected: selectedRecordingTeam == match.homeTeamID
+            )
+
+            Text("-")
+                .font(.title2.weight(.bold))
+                .foregroundStyle(.secondary)
+
+            ScorePanel(
+                teamName: teamName(for: match.awayTeamID),
+                score: score(for: match.awayTeamID),
+                isSelected: selectedRecordingTeam == match.awayTeamID
+            )
         }
     }
 
@@ -416,6 +437,27 @@ struct RecordingView: View {
         scoreEvents.filter { $0.category == category && $0.teamID == selectedRecordingTeam }.count
     }
 
+    private func score(for teamID: UUID) -> Int {
+        scoreEvents
+            .filter { $0.teamID == teamID }
+            .reduce(0) { partialResult, event in
+                partialResult + scoreValue(for: event.category)
+            }
+    }
+
+    private func scoreValue(for category: String) -> Int {
+        switch ScoringCategory(rawValue: category) {
+        case .tryScore:
+            return 5
+        case .conversion:
+            return 2
+        case .penaltyGoal, .dropGoal:
+            return 3
+        case nil:
+            return 0
+        }
+    }
+
     private func teamName(for id: UUID) -> String {
         teams.first { $0.id == id }?.name ?? "チーム未設定"
     }
@@ -434,6 +476,29 @@ struct RecordingView: View {
             return accumulatedElapsedSeconds
         }
         return accumulatedElapsedSeconds + max(0, Int(date.timeIntervalSince(activeStartedAt)))
+    }
+}
+
+private struct ScorePanel: View {
+    let teamName: String
+    let score: Int
+    let isSelected: Bool
+
+    var body: some View {
+        VStack(spacing: 4) {
+            Text(teamName)
+                .font(.caption)
+                .lineLimit(1)
+                .minimumScaleFactor(0.7)
+
+            Text("\(score)")
+                .font(.system(size: 34, weight: .bold, design: .rounded))
+                .monospacedDigit()
+        }
+        .frame(maxWidth: .infinity, minHeight: 72)
+        .padding(.horizontal, 8)
+        .background(isSelected ? Color.blue.opacity(0.12) : Color.secondary.opacity(0.08))
+        .clipShape(RoundedRectangle(cornerRadius: 8))
     }
 }
 
