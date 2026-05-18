@@ -109,7 +109,7 @@ struct V3RecordingView: View {
             }
             Button("キャンセル", role: .cancel) { }
         } message: {
-            Text("前半の記録は保持されます。")
+            Text("Time は 0:00 に戻ります。前半の記録は保持されます。")
         }
         .onAppear {
             if selectedInputTeamID == nil {
@@ -129,8 +129,13 @@ struct V3RecordingView: View {
     // MARK: - Half change
 
     private func switchToSecondHalf() {
-        // 段階1: 表示の切り替えのみ。Time/BIP/Team には触れない。
-        // 段階2 以降で Time の停止と 0:00 リセットをここに足す。
+        // 段階2: Time を停止して 0:00 にリセット。
+        // BIP/Team1/Team2 はここでは触れない（段階3 で結合する）。
+        let now = Date()
+        if timeState.isRunning {
+            _ = timeState.stop(at: now)
+        }
+        timeState.reset()
         isSecondHalf = true
     }
 
@@ -578,6 +583,11 @@ private struct V3TimerState {
         accumulatedSeconds += intervalSeconds
         self.startedAt = nil
         return intervalSeconds
+    }
+
+    mutating func reset() {
+        accumulatedSeconds = 0
+        startedAt = nil
     }
 
     func elapsedText(at date: Date) -> String {
