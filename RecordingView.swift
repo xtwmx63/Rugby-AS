@@ -81,12 +81,6 @@ struct RecordingView: View {
         .navigationTitle("記録")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
-            ToolbarItem(placement: .topBarLeading) {
-                NavigationLink("V3") {
-                    V3RecordingView(match: match)
-                }
-            }
-
             ToolbarItem(placement: .topBarTrailing) {
                 Button("試合終了") {
                     finishAlertIsPresented = true

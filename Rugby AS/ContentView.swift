@@ -30,7 +30,7 @@ struct ContentView: View {
                             if isFinished(match) {
                                 MatchSummaryView(match: match)
                             } else {
-                                RecordingView(match: match)
+                                V3RecordingView(match: match)
                             }
                         } label: {
                             MatchRow(

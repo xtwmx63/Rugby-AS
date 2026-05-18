@@ -59,7 +59,7 @@ struct MatchSummaryView: View {
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 NavigationLink("記録へ") {
-                    RecordingView(match: match)
+                    V3RecordingView(match: match)
                 }
             }
         }
