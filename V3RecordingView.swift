@@ -11,6 +11,7 @@ import SwiftUI
 struct V3RecordingView: View {
     @Environment(\.modelContext) private var modelContext
     @Query private var teams: [Team]
+    @Query(sort: \Player.number) private var allPlayers: [Player]
     @Query private var allEvents: [StatEvent]
 
     let match: Match
@@ -20,6 +21,13 @@ struct V3RecordingView: View {
     @State private var team1State = V3TimerState()
     @State private var team2State = V3TimerState()
     @State private var selectedInputTeamID: UUID?
+    @State private var scoringEventForPlayerSelection: StatEvent?
+
+    private var selectedTeamPlayers: [Player] {
+        allPlayers
+            .filter { $0.teamID == selectedInputTeam }
+            .sorted { $0.number < $1.number }
+    }
 
     private var matchEvents: [StatEvent] {
         allEvents.filter { $0.matchID == match.id }
@@ -107,6 +115,14 @@ struct V3RecordingView: View {
             if selectedInputTeamID == nil {
                 selectedInputTeamID = match.homeTeamID
             }
+        }
+        .sheet(item: $scoringEventForPlayerSelection) { event in
+            PlayerSelectionSheet(players: selectedTeamPlayers, title: "得点者を選択") { player in
+                event.playerID = player?.id
+                try? modelContext.save()
+                scoringEventForPlayerSelection = nil
+            }
+            .presentationDetents([.medium, .large])
         }
     }
 
@@ -306,6 +322,7 @@ struct V3RecordingView: View {
         )
         modelContext.insert(event)
         try? modelContext.save()
+        scoringEventForPlayerSelection = event
     }
 
     private func countEvents(category: String) -> Int {

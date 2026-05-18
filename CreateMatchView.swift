@@ -96,7 +96,7 @@ struct CreateMatchView: View {
             Text(alertMessage ?? "入力内容を確認してください。")
         }
         .navigationDestination(item: $recordingMatch) { match in
-            RecordingView(match: match)
+            V3RecordingView(match: match)
         }
     }
 
