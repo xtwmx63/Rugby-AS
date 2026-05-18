@@ -5,47 +5,72 @@
 //  Created by Codex on 2026/05/18.
 //
 
+import SwiftData
 import SwiftUI
 
 struct V3RecordingView: View {
+    @Query private var teams: [Team]
+
     let match: Match
 
     @State private var timeState = V3TimerState()
     @State private var bipState = V3TimerState()
+    @State private var team1State = V3TimerState()
+    @State private var team2State = V3TimerState()
 
     var body: some View {
-        VStack(spacing: 24) {
-            timerPanel(title: "Time", state: timeState, fontSize: 54)
+        ScrollView {
+            VStack(spacing: 24) {
+                timerPanel(title: "Time", state: timeState, fontSize: 54)
 
-            Button {
-                toggleTime()
-            } label: {
-                Text(timeState.isRunning ? "Time 停止" : "Time 開始")
-                    .font(.title3.weight(.semibold))
-                    .frame(maxWidth: .infinity, minHeight: 56)
+                Button {
+                    toggleTime()
+                } label: {
+                    Text(timeState.isRunning ? "Time 停止" : "Time 開始")
+                        .font(.title3.weight(.semibold))
+                        .frame(maxWidth: .infinity, minHeight: 56)
+                }
+                .buttonStyle(.borderedProminent)
+
+                Divider()
+
+                timerPanel(title: "BIP", state: bipState, fontSize: 42)
+
+                Button {
+                    toggleBIP()
+                } label: {
+                    Text(bipState.isRunning ? "BIP 停止" : "BIP 開始")
+                        .font(.title3.weight(.semibold))
+                        .frame(maxWidth: .infinity, minHeight: 52)
+                }
+                .buttonStyle(.bordered)
+                .disabled(!timeState.isRunning)
+
+                Divider()
+
+                HStack(spacing: 12) {
+                    teamTimerPanel(
+                        title: teamName(for: match.homeTeamID),
+                        state: team1State,
+                        buttonTitle: team1State.isRunning ? "Team1 停止" : "Team1 開始",
+                        action: toggleTeam1
+                    )
+
+                    teamTimerPanel(
+                        title: teamName(for: match.awayTeamID),
+                        state: team2State,
+                        buttonTitle: team2State.isRunning ? "Team2 停止" : "Team2 開始",
+                        action: toggleTeam2
+                    )
+                }
+
+                Text("段階3-1: Team1/Team2 を追加。どちらかを開始すると、もう片方は停止します。")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
             }
-            .buttonStyle(.borderedProminent)
-
-            Divider()
-
-            timerPanel(title: "BIP", state: bipState, fontSize: 42)
-
-            Button {
-                toggleBIP()
-            } label: {
-                Text(bipState.isRunning ? "BIP 停止" : "BIP 開始")
-                    .font(.title3.weight(.semibold))
-                    .frame(maxWidth: .infinity, minHeight: 52)
-            }
-            .buttonStyle(.bordered)
-            .disabled(!timeState.isRunning)
-
-            Text("段階2: Time と BIP の2層。Time停止中はBIPも動けません。BIPを止めてもTimeは動き続けます。")
-                .font(.footnote)
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
+            .padding()
         }
-        .padding()
         .navigationTitle("V3 記録")
         .navigationBarTitleDisplayMode(.inline)
     }
@@ -64,11 +89,47 @@ struct V3RecordingView: View {
         }
     }
 
+    private func teamTimerPanel(
+        title: String,
+        state: V3TimerState,
+        buttonTitle: String,
+        action: @escaping () -> Void
+    ) -> some View {
+        VStack(spacing: 10) {
+            Text(title)
+                .font(.headline)
+                .lineLimit(1)
+                .minimumScaleFactor(0.7)
+
+            TimelineView(.periodic(from: .now, by: 1)) { context in
+                Text(state.elapsedText(at: context.date))
+                    .font(.system(size: 28, weight: .bold, design: .monospaced))
+                    .frame(maxWidth: .infinity)
+            }
+
+            Button {
+                action()
+            } label: {
+                Text(buttonTitle)
+                    .font(.subheadline.weight(.semibold))
+                    .frame(maxWidth: .infinity, minHeight: 44)
+            }
+            .buttonStyle(.borderedProminent)
+            .disabled(!bipState.isRunning)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(10)
+        .background(state.isRunning ? Color.blue.opacity(0.12) : Color.secondary.opacity(0.08))
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+    }
+
     private func toggleTime() {
         let now = Date()
         if timeState.isRunning {
             timeState.stop(at: now)
             bipState.stop(at: now)
+            team1State.stop(at: now)
+            team2State.stop(at: now)
         } else {
             timeState.start(at: now)
         }
@@ -76,7 +137,40 @@ struct V3RecordingView: View {
 
     private func toggleBIP() {
         guard timeState.isRunning else { return }
-        bipState.toggle(at: Date())
+        let now = Date()
+        if bipState.isRunning {
+            bipState.stop(at: now)
+            team1State.stop(at: now)
+            team2State.stop(at: now)
+        } else {
+            bipState.start(at: now)
+        }
+    }
+
+    private func toggleTeam1() {
+        guard bipState.isRunning else { return }
+        let now = Date()
+        if team1State.isRunning {
+            team1State.stop(at: now)
+        } else {
+            team2State.stop(at: now)
+            team1State.start(at: now)
+        }
+    }
+
+    private func toggleTeam2() {
+        guard bipState.isRunning else { return }
+        let now = Date()
+        if team2State.isRunning {
+            team2State.stop(at: now)
+        } else {
+            team1State.stop(at: now)
+            team2State.start(at: now)
+        }
+    }
+
+    private func teamName(for id: UUID) -> String {
+        teams.first { $0.id == id }?.name ?? "チーム未設定"
     }
 }
 
@@ -131,4 +225,12 @@ private struct V3TimerState {
             )
         )
     }
+    .modelContainer(for: [
+        Team.self,
+        Player.self,
+        Tournament.self,
+        Match.self,
+        StatEvent.self,
+        Substitution.self
+    ], inMemory: true)
 }
