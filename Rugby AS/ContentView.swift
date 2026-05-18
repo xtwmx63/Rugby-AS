@@ -9,11 +9,13 @@ import SwiftData
 import SwiftUI
 
 struct ContentView: View {
+    @Environment(\.modelContext) private var modelContext
     @Query(sort: \Match.playedAt, order: .reverse) private var matches: [Match]
     @Query private var teams: [Team]
     @Query private var tournaments: [Tournament]
     @Query private var events: [StatEvent]
     @State private var isShowingCreateMatch = false
+    @State private var matchPendingDeletion: Match?
 
     var body: some View {
         NavigationStack {
@@ -40,6 +42,11 @@ struct ContentView: View {
                                 awayTeamName: teamName(for: match.awayTeamID),
                                 isFinished: isFinished(match)
                             )
+                        }
+                        .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                            Button("削除", role: .destructive) {
+                                matchPendingDeletion = match
+                            }
                         }
                     }
                 }
@@ -68,6 +75,21 @@ struct ContentView: View {
                     CreateMatchView()
                 }
             }
+            .alert(
+                "この試合を削除しますか？",
+                isPresented: Binding(
+                    get: { matchPendingDeletion != nil },
+                    set: { if !$0 { matchPendingDeletion = nil } }
+                ),
+                presenting: matchPendingDeletion
+            ) { match in
+                Button("削除する", role: .destructive) {
+                    deleteMatch(match)
+                }
+                Button("キャンセル", role: .cancel) { }
+            } message: { match in
+                Text(deletionMessage(for: match))
+            }
         }
     }
 
@@ -83,6 +105,17 @@ struct ContentView: View {
         events.contains { event in
             event.matchID == match.id && event.category == "match_state" && event.outcome == "finished"
         }
+    }
+
+    private func deletionMessage(for match: Match) -> String {
+        let date = match.playedAt.formatted(date: .numeric, time: .omitted)
+        return "\(teamName(for: match.homeTeamID)) vs \(teamName(for: match.awayTeamID))\n\(date)\n\n記録したスタッツもすべて削除され、元に戻せません。"
+    }
+
+    private func deleteMatch(_ match: Match) {
+        // 段階2: Match のみ削除。紐づく StatEvent は段階3 で連鎖削除する。
+        modelContext.delete(match)
+        try? modelContext.save()
     }
 }
 
