@@ -13,6 +13,7 @@ struct RecordingView: View {
     @Environment(\.dismiss) private var dismiss
     @Query(sort: \Player.number) private var allPlayers: [Player]
     @Query private var allEvents: [StatEvent]
+    @Query private var teams: [Team]
 
     let match: Match
 
@@ -20,6 +21,7 @@ struct RecordingView: View {
     @State private var accumulatedElapsedSeconds = 0
     @State private var timeControlState = TimeControlState.notStarted
     @State private var selectedHalf = "前半"
+    @State private var selectedRecordingTeamID: UUID?
     @State private var currentPossession: PossessionSide?
     @State private var possessionStartedAt: Date?
     @State private var lastEventID: UUID?
@@ -39,6 +41,18 @@ struct RecordingView: View {
             }
     }
 
+    private var selectedRecordingTeam: UUID {
+        selectedRecordingTeamID ?? match.homeTeamID
+    }
+
+    private var selectedTeamPlayers: [Player] {
+        players.filter { $0.teamID == selectedRecordingTeam }
+    }
+
+    private var opponentTeamID: UUID {
+        selectedRecordingTeam == match.homeTeamID ? match.awayTeamID : match.homeTeamID
+    }
+
     private var matchEvents: [StatEvent] {
         allEvents.filter { $0.matchID == match.id }
     }
@@ -55,6 +69,7 @@ struct RecordingView: View {
         ScrollView {
             VStack(spacing: 18) {
                 header
+                recordingTeamSection
                 possessionSection
                 scoringSection
                 setPieceSection
@@ -71,8 +86,13 @@ struct RecordingView: View {
                 }
             }
         }
+        .onAppear {
+            if selectedRecordingTeamID == nil {
+                selectedRecordingTeamID = match.homeTeamID
+            }
+        }
         .sheet(item: $scoringEventForPlayerSelection) { event in
-            PlayerSelectionSheet(players: players, title: "得点者を選択") { player in
+            PlayerSelectionSheet(players: selectedTeamPlayers, title: "得点者を選択") { player in
                 event.playerID = player?.id
                 try? modelContext.save()
                 scoringEventForPlayerSelection = nil
@@ -108,6 +128,24 @@ struct RecordingView: View {
         }
     }
 
+    private var recordingTeamSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("記録対象")
+                .font(.headline)
+
+            Picker("記録対象", selection: recordingTeamSelection) {
+                Text(teamName(for: match.homeTeamID)).tag(match.homeTeamID)
+                Text(teamName(for: match.awayTeamID)).tag(match.awayTeamID)
+            }
+            .pickerStyle(.segmented)
+
+            Text("現在は \(teamName(for: selectedRecordingTeam)) の記録として保存します。")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
     private var timeControlButtons: some View {
         HStack(spacing: 12) {
             Button("開始") {
@@ -136,8 +174,8 @@ struct RecordingView: View {
                 .font(.headline)
 
             HStack(spacing: 12) {
-                possessionButton(title: "自チーム", side: .own)
-                possessionButton(title: "相手", side: .opponent)
+                possessionButton(title: teamName(for: selectedRecordingTeam), side: .own)
+                possessionButton(title: teamName(for: opponentTeamID), side: .opponent)
             }
 
             Text(currentPossessionText)
@@ -195,6 +233,20 @@ struct RecordingView: View {
         .disabled(lastEventID == nil)
     }
 
+    private var recordingTeamSelection: Binding<UUID> {
+        Binding(
+            get: { selectedRecordingTeam },
+            set: { newValue in
+                if timeControlState == .running {
+                    closeCurrentPossession(at: Date())
+                    currentPossession = nil
+                    possessionStartedAt = nil
+                }
+                selectedRecordingTeamID = newValue
+            }
+        )
+    }
+
     private var currentPossessionText: String {
         switch timeControlState {
         case .notStarted:
@@ -203,7 +255,7 @@ struct RecordingView: View {
             return "一時停止中はどちらのポゼッションにも含めません。"
         case .running:
             guard let currentPossession else {
-                return "自チームか相手をタップした時点から保持を記録します。"
+                return "保持チームをタップした時点から記録します。"
             }
             return "現在: \(currentPossession.displayName)"
         }
@@ -313,7 +365,13 @@ struct RecordingView: View {
     }
 
     private func saveEvent(category: String, outcome: String, seconds: Int, opensPlayerSheet: Bool) {
-        let event = StatEvent(matchID: match.id, category: category, outcome: outcome, seconds: seconds)
+        let event = StatEvent(
+            matchID: match.id,
+            teamID: selectedRecordingTeam,
+            category: category,
+            outcome: outcome,
+            seconds: seconds
+        )
         modelContext.insert(event)
         lastEventID = event.id
         try? modelContext.save()
@@ -355,7 +413,11 @@ struct RecordingView: View {
     }
 
     private func countEvents(category: String) -> Int {
-        scoreEvents.filter { $0.category == category }.count
+        scoreEvents.filter { $0.category == category && $0.teamID == selectedRecordingTeam }.count
+    }
+
+    private func teamName(for id: UUID) -> String {
+        teams.first { $0.id == id }?.name ?? "チーム未設定"
     }
 
     private func elapsedSeconds() -> Int {

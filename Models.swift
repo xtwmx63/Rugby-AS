@@ -72,6 +72,7 @@ final class Match {
 final class StatEvent {
     @Attribute(.unique) var id: UUID
     var matchID: UUID
+    var teamID: UUID?
     var playerID: UUID?
     var category: String
     var outcome: String
@@ -80,6 +81,7 @@ final class StatEvent {
     init(
         id: UUID = UUID(),
         matchID: UUID,
+        teamID: UUID? = nil,
         playerID: UUID? = nil,
         category: String,
         outcome: String,
@@ -87,6 +89,7 @@ final class StatEvent {
     ) {
         self.id = id
         self.matchID = matchID
+        self.teamID = teamID
         self.playerID = playerID
         self.category = category
         self.outcome = outcome
