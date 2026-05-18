@@ -25,6 +25,7 @@ struct V3RecordingView: View {
     @State private var scoringEventForPlayerSelection: StatEvent?
     @State private var isSecondHalf = false
     @State private var isShowingFinishConfirmation = false
+    @State private var isShowingHalfChangeConfirmation = false
 
     private var selectedTeamPlayers: [Player] {
         allPlayers
@@ -98,6 +99,18 @@ struct V3RecordingView: View {
         } message: {
             Text("終了するとサマリーで集計を見られるようになります。")
         }
+        .confirmationDialog(
+            "後半に切り替えますか？",
+            isPresented: $isShowingHalfChangeConfirmation,
+            titleVisibility: .visible
+        ) {
+            Button("はい") {
+                switchToSecondHalf()
+            }
+            Button("キャンセル", role: .cancel) { }
+        } message: {
+            Text("前半の記録は保持されます。")
+        }
         .onAppear {
             if selectedInputTeamID == nil {
                 selectedInputTeamID = match.homeTeamID
@@ -111,6 +124,14 @@ struct V3RecordingView: View {
             }
             .presentationDetents([.medium, .large])
         }
+    }
+
+    // MARK: - Half change
+
+    private func switchToSecondHalf() {
+        // 段階1: 表示の切り替えのみ。Time/BIP/Team には触れない。
+        // 段階2 以降で Time の停止と 0:00 リセットをここに足す。
+        isSecondHalf = true
     }
 
     // MARK: - Finish match
@@ -159,10 +180,14 @@ struct V3RecordingView: View {
                 .font(.system(size: 22, weight: .bold, design: .monospaced))
 
             Button(isSecondHalf ? "後半" : "前半") {
-                isSecondHalf.toggle()
+                // 後半は一方通行: 押しても何もしない（disabled で無効化済み）
+                if !isSecondHalf {
+                    isShowingHalfChangeConfirmation = true
+                }
             }
             .buttonStyle(.bordered)
             .controlSize(.small)
+            .disabled(isSecondHalf)
         }
         .padding(.vertical, 8)
         .padding(.horizontal, 10)
