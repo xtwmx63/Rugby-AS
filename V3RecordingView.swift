@@ -10,6 +10,7 @@ import SwiftUI
 
 struct V3RecordingView: View {
     @Environment(\.modelContext) private var modelContext
+    @Environment(\.dismiss) private var dismiss
     @Query private var teams: [Team]
     @Query(sort: \Player.number) private var allPlayers: [Player]
     @Query private var allEvents: [StatEvent]
@@ -23,6 +24,7 @@ struct V3RecordingView: View {
     @State private var selectedInputTeamID: UUID?
     @State private var scoringEventForPlayerSelection: StatEvent?
     @State private var isSecondHalf = false
+    @State private var isShowingFinishConfirmation = false
 
     private var selectedTeamPlayers: [Player] {
         allPlayers
@@ -76,6 +78,26 @@ struct V3RecordingView: View {
         .padding(.vertical, 8)
         .navigationTitle("V3 記録")
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Button("試合終了") {
+                    isShowingFinishConfirmation = true
+                }
+                .tint(.red)
+            }
+        }
+        .confirmationDialog(
+            "この試合を終了しますか？",
+            isPresented: $isShowingFinishConfirmation,
+            titleVisibility: .visible
+        ) {
+            Button("終了する", role: .destructive) {
+                finishMatch()
+            }
+            Button("キャンセル", role: .cancel) { }
+        } message: {
+            Text("終了するとサマリーで集計を見られるようになります。")
+        }
         .onAppear {
             if selectedInputTeamID == nil {
                 selectedInputTeamID = match.homeTeamID
@@ -89,6 +111,28 @@ struct V3RecordingView: View {
             }
             .presentationDetents([.medium, .large])
         }
+    }
+
+    // MARK: - Finish match
+
+    private func finishMatch() {
+        // タイマー走行中なら既存の toggleTime() で停止し、最後の区間を保存して締める。
+        // ステートマシンは変更せず、既存処理を利用するだけ。
+        if timeState.isRunning {
+            toggleTime()
+        }
+
+        let marker = StatEvent(
+            matchID: match.id,
+            teamID: nil,
+            category: "match_state",
+            outcome: "finished",
+            seconds: timeState.elapsedSeconds(at: Date())
+        )
+        modelContext.insert(marker)
+        try? modelContext.save()
+
+        dismiss()
     }
 
     // MARK: - Header band (Time / Score / Half)
