@@ -16,7 +16,8 @@ struct RecordingView: View {
 
     let match: Match
 
-    @State private var recordingStartedAt = Date()
+    @State private var activeStartedAt: Date?
+    @State private var accumulatedElapsedSeconds = 0
     @State private var timeControlState = TimeControlState.notStarted
     @State private var selectedHalf = "前半"
     @State private var currentPossession: PossessionSide?
@@ -70,9 +71,6 @@ struct RecordingView: View {
                 }
             }
         }
-        .onAppear {
-            recordingStartedAt = Date()
-        }
         .sheet(item: $scoringEventForPlayerSelection) { event in
             PlayerSelectionSheet(players: players, title: "得点者を選択") { player in
                 event.playerID = player?.id
@@ -113,19 +111,19 @@ struct RecordingView: View {
     private var timeControlButtons: some View {
         HStack(spacing: 12) {
             Button("開始") {
-                timeControlState = .running
+                startTiming()
             }
             .buttonStyle(.borderedProminent)
             .disabled(timeControlState != .notStarted)
 
             Button("一時停止") {
-                timeControlState = .paused
+                pauseTiming()
             }
             .buttonStyle(.bordered)
             .disabled(timeControlState != .running)
 
             Button("再開") {
-                timeControlState = .running
+                resumeTiming()
             }
             .buttonStyle(.borderedProminent)
             .disabled(timeControlState != .paused)
@@ -198,10 +196,17 @@ struct RecordingView: View {
     }
 
     private var currentPossessionText: String {
-        guard let currentPossession else {
-            return "最初のタップまでは計測しません。"
+        switch timeControlState {
+        case .notStarted:
+            return "開始を押すまで計測しません。"
+        case .paused:
+            return "一時停止中はどちらのポゼッションにも含めません。"
+        case .running:
+            guard let currentPossession else {
+                return "自チームか相手をタップした時点から保持を記録します。"
+            }
+            return "現在: \(currentPossession.displayName)"
         }
-        return "現在: \(currentPossession.displayName)"
     }
 
     private func possessionButton(title: String, side: PossessionSide) -> some View {
@@ -214,6 +219,7 @@ struct RecordingView: View {
         }
         .buttonStyle(.borderedProminent)
         .tint(currentPossession == side ? .blue : .gray)
+        .disabled(timeControlState != .running)
     }
 
     private func scoringButton(_ category: ScoringCategory) -> some View {
@@ -232,16 +238,12 @@ struct RecordingView: View {
     }
 
     private func switchPossession(to side: PossessionSide) {
-        let now = Date()
-        if let currentPossession, let possessionStartedAt, currentPossession != side {
-            saveEvent(
-                category: "possession",
-                outcome: currentPossession.rawValue,
-                seconds: max(1, Int(now.timeIntervalSince(possessionStartedAt))),
-                opensPlayerSheet: false
-            )
-        }
+        guard timeControlState == .running else { return }
 
+        guard currentPossession != side else { return }
+
+        let now = Date()
+        closeCurrentPossession(at: now)
         currentPossession = side
         possessionStartedAt = now
     }
@@ -264,6 +266,52 @@ struct RecordingView: View {
         )
     }
 
+    private func startTiming() {
+        accumulatedElapsedSeconds = 0
+        activeStartedAt = Date()
+        currentPossession = nil
+        possessionStartedAt = nil
+        timeControlState = .running
+    }
+
+    private func pauseTiming() {
+        guard timeControlState == .running else { return }
+
+        let now = Date()
+        closeCurrentPossession(at: now)
+        updateAccumulatedElapsedSeconds(at: now)
+        currentPossession = nil
+        possessionStartedAt = nil
+        activeStartedAt = nil
+        timeControlState = .paused
+        saveEvent(category: "possession", outcome: "none", seconds: 0, opensPlayerSheet: false)
+    }
+
+    private func resumeTiming() {
+        guard timeControlState == .paused else { return }
+
+        activeStartedAt = Date()
+        currentPossession = nil
+        possessionStartedAt = nil
+        timeControlState = .running
+    }
+
+    private func closeCurrentPossession(at date: Date) {
+        guard let currentPossession, let possessionStartedAt else { return }
+
+        saveEvent(
+            category: "possession",
+            outcome: currentPossession.rawValue,
+            seconds: max(1, Int(date.timeIntervalSince(possessionStartedAt))),
+            opensPlayerSheet: false
+        )
+    }
+
+    private func updateAccumulatedElapsedSeconds(at date: Date) {
+        guard let activeStartedAt else { return }
+        accumulatedElapsedSeconds += max(0, Int(date.timeIntervalSince(activeStartedAt)))
+    }
+
     private func saveEvent(category: String, outcome: String, seconds: Int, opensPlayerSheet: Bool) {
         let event = StatEvent(matchID: match.id, category: category, outcome: outcome, seconds: seconds)
         modelContext.insert(event)
@@ -281,7 +329,7 @@ struct RecordingView: View {
             return
         }
 
-        if event.category == "possession", let side = PossessionSide(rawValue: event.outcome) {
+        if event.category == "possession", let side = PossessionSide(rawValue: event.outcome), timeControlState == .running {
             currentPossession = side
             possessionStartedAt = Date()
         }
@@ -292,17 +340,16 @@ struct RecordingView: View {
     }
 
     private func finishMatch() {
-        if let currentPossession, let possessionStartedAt {
-            saveEvent(
-                category: "possession",
-                outcome: currentPossession.rawValue,
-                seconds: max(1, Int(Date().timeIntervalSince(possessionStartedAt))),
-                opensPlayerSheet: false
-            )
+        let now = Date()
+        if timeControlState == .running {
+            closeCurrentPossession(at: now)
+            updateAccumulatedElapsedSeconds(at: now)
         }
 
         currentPossession = nil
         possessionStartedAt = nil
+        activeStartedAt = nil
+        timeControlState = .paused
         saveEvent(category: "match_state", outcome: "finished", seconds: elapsedSeconds(), opensPlayerSheet: false)
         dismiss()
     }
@@ -312,12 +359,19 @@ struct RecordingView: View {
     }
 
     private func elapsedSeconds() -> Int {
-        max(0, Int(Date().timeIntervalSince(recordingStartedAt)))
+        activeElapsedSeconds(at: Date())
     }
 
     private func elapsedText(at date: Date) -> String {
-        let seconds = max(0, Int(date.timeIntervalSince(recordingStartedAt)))
+        let seconds = activeElapsedSeconds(at: date)
         return String(format: "%02d:%02d", seconds / 60, seconds % 60)
+    }
+
+    private func activeElapsedSeconds(at date: Date) -> Int {
+        guard timeControlState == .running, let activeStartedAt else {
+            return accumulatedElapsedSeconds
+        }
+        return accumulatedElapsedSeconds + max(0, Int(date.timeIntervalSince(activeStartedAt)))
     }
 }
 
