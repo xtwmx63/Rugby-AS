@@ -22,6 +22,7 @@ struct V3RecordingView: View {
     @State private var team2State = V3TimerState()
     @State private var selectedInputTeamID: UUID?
     @State private var scoringEventForPlayerSelection: StatEvent?
+    @State private var isSecondHalf = false
 
     private var selectedTeamPlayers: [Player] {
         allPlayers
@@ -52,63 +53,27 @@ struct V3RecordingView: View {
         )
     }
 
+    // 取り消し対象は「直前に手動で記録した1件」= 得点・セットプレーのうち最新。
+    // ポゼッションは V3 のタイマー連動で自動保存されるため、ここでは触れない。
+    private var undoableLastEvent: StatEvent? {
+        matchEvents
+            .filter { $0.category != "possession" }
+            .sorted { $0.seconds > $1.seconds }
+            .first
+    }
+
     var body: some View {
-        ScrollView {
-            VStack(spacing: 24) {
-                timerPanel(title: "Time", state: timeState, fontSize: 54)
-
-                Button {
-                    toggleTime()
-                } label: {
-                    Text(timeState.isRunning ? "Time 停止" : "Time 開始")
-                        .font(.title3.weight(.semibold))
-                        .frame(maxWidth: .infinity, minHeight: 56)
-                }
-                .buttonStyle(.borderedProminent)
-
-                Divider()
-
-                timerPanel(title: "BIP", state: bipState, fontSize: 42)
-
-                Button {
-                    toggleBIP()
-                } label: {
-                    Text(bipState.isRunning ? "BIP 停止" : "BIP 開始")
-                        .font(.title3.weight(.semibold))
-                        .frame(maxWidth: .infinity, minHeight: 52)
-                }
-                .buttonStyle(.bordered)
-                .disabled(!timeState.isRunning)
-
-                Divider()
-
-                HStack(spacing: 12) {
-                    teamTimerPanel(
-                        title: teamName(for: match.homeTeamID),
-                        state: team1State,
-                        buttonTitle: team1State.isRunning ? "Team1 停止" : "Team1 開始",
-                        action: toggleTeam1
-                    )
-
-                    teamTimerPanel(
-                        title: teamName(for: match.awayTeamID),
-                        state: team2State,
-                        buttonTitle: team2State.isRunning ? "Team2 停止" : "Team2 開始",
-                        action: toggleTeam2
-                    )
-                }
-
-                inputTeamSection
-                scoringSection
-                setPieceSection
-
-                Text("V3時間機能はそのままに、得点とセットプレー入力を合流しています。")
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-                    .multilineTextAlignment(.center)
-            }
-            .padding()
+        VStack(spacing: 12) {
+            headerBand
+            possessionBand
+            inputTeamPicker
+            scoringRow
+            setPieceCompact
+            Spacer(minLength: 0)
+            undoBand
         }
+        .padding(.horizontal)
+        .padding(.vertical, 8)
         .navigationTitle("V3 記録")
         .navigationBarTitleDisplayMode(.inline)
         .onAppear {
@@ -126,44 +91,117 @@ struct V3RecordingView: View {
         }
     }
 
-    private var inputTeamSection: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("入力対象")
-                .font(.headline)
+    // MARK: - Header band (Time / Score / Half)
 
-            Picker("入力対象", selection: inputTeamSelection) {
-                Text(teamName(for: match.homeTeamID)).tag(match.homeTeamID)
-                Text(teamName(for: match.awayTeamID)).tag(match.awayTeamID)
-            }
-            .pickerStyle(.segmented)
-
-            Text("得点とセットプレーは \(teamName(for: selectedInputTeam)) の記録として保存します。")
-                .font(.footnote)
+    private var headerBand: some View {
+        HStack(spacing: 10) {
+            Text("Time")
+                .font(.caption)
                 .foregroundStyle(.secondary)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-    }
 
-    private var scoringSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("得点")
-                .font(.headline)
-
-            LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 12) {
-                scoringButton(.tryScore)
-                scoringButton(.conversion)
-                scoringButton(.penaltyGoal)
-                scoringButton(.dropGoal)
+            TimelineView(.periodic(from: .now, by: 1)) { context in
+                Text(timeState.elapsedText(at: context.date))
+                    .font(.system(size: 26, weight: .bold, design: .monospaced))
             }
+
+            Button(timeState.isRunning ? "停止" : "開始") {
+                toggleTime()
+            }
+            .buttonStyle(.borderedProminent)
+
+            Spacer()
+
+            Text("\(score(for: match.homeTeamID)) - \(score(for: match.awayTeamID))")
+                .font(.system(size: 22, weight: .bold, design: .monospaced))
+
+            Button(isSecondHalf ? "後半" : "前半") {
+                isSecondHalf.toggle()
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.vertical, 8)
+        .padding(.horizontal, 10)
+        .background(Color.secondary.opacity(0.08))
+        .clipShape(RoundedRectangle(cornerRadius: 8))
     }
 
-    private var setPieceSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("セットプレー")
-                .font(.headline)
+    // MARK: - Possession band (Team1 / BIP / Team2)
 
+    private var possessionBand: some View {
+        HStack(spacing: 8) {
+            teamTimerPanel(
+                title: teamName(for: match.homeTeamID),
+                state: team1State,
+                buttonTitle: team1State.isRunning ? "停止" : "開始",
+                action: toggleTeam1
+            )
+
+            bipTimerPanel
+
+            teamTimerPanel(
+                title: teamName(for: match.awayTeamID),
+                state: team2State,
+                buttonTitle: team2State.isRunning ? "停止" : "開始",
+                action: toggleTeam2
+            )
+        }
+    }
+
+    private var bipTimerPanel: some View {
+        VStack(spacing: 6) {
+            Text("BIP")
+                .font(.subheadline.weight(.semibold))
+                .lineLimit(1)
+                .minimumScaleFactor(0.7)
+
+            TimelineView(.periodic(from: .now, by: 1)) { context in
+                Text(bipState.elapsedText(at: context.date))
+                    .font(.system(size: 24, weight: .bold, design: .monospaced))
+                    .frame(maxWidth: .infinity)
+            }
+
+            Button {
+                toggleBIP()
+            } label: {
+                Text(bipState.isRunning ? "停止" : "開始")
+                    .font(.subheadline.weight(.semibold))
+                    .frame(maxWidth: .infinity, minHeight: 38)
+            }
+            .buttonStyle(.bordered)
+            .disabled(!timeState.isRunning)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(8)
+        .background(bipState.isRunning ? Color.orange.opacity(0.15) : Color.secondary.opacity(0.08))
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+    }
+
+    // MARK: - Input target picker
+
+    private var inputTeamPicker: some View {
+        Picker("入力対象", selection: inputTeamSelection) {
+            Text(teamName(for: match.homeTeamID)).tag(match.homeTeamID)
+            Text(teamName(for: match.awayTeamID)).tag(match.awayTeamID)
+        }
+        .pickerStyle(.segmented)
+    }
+
+    // MARK: - Scoring row (1×4)
+
+    private var scoringRow: some View {
+        HStack(spacing: 8) {
+            scoringButton(.tryScore)
+            scoringButton(.conversion)
+            scoringButton(.penaltyGoal)
+            scoringButton(.dropGoal)
+        }
+    }
+
+    // MARK: - Set piece compact (1 row per type)
+
+    private var setPieceCompact: some View {
+        VStack(spacing: 8) {
             V3SetPieceControl(
                 title: "ラインアウト",
                 category: "lineout",
@@ -180,34 +218,38 @@ struct V3RecordingView: View {
                 onRecord: recordSetPiece
             )
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    private func timerPanel(title: String, state: V3TimerState, fontSize: CGFloat) -> some View {
-        VStack(spacing: 8) {
-            Text(title)
-                .font(.headline)
-                .foregroundStyle(.secondary)
+    // MARK: - Undo band
 
-            TimelineView(.periodic(from: .now, by: 1)) { context in
-                Text(state.elapsedText(at: context.date))
-                    .font(.system(size: fontSize, weight: .bold, design: .monospaced))
-                    .frame(maxWidth: .infinity)
-            }
+    private var undoBand: some View {
+        Button {
+            undoLastEvent()
+        } label: {
+            Text("取り消し")
+                .font(.subheadline.weight(.semibold))
+                .frame(maxWidth: .infinity, minHeight: 40)
         }
+        .buttonStyle(.bordered)
+        .tint(.red)
+        .disabled(undoableLastEvent == nil)
     }
+
+    // MARK: - Subviews
 
     private func scoringButton(_ category: ScoringCategory) -> some View {
         Button {
             recordScore(category)
         } label: {
-            VStack(spacing: 4) {
+            VStack(spacing: 2) {
                 Text(category.displayName)
-                    .font(.headline)
+                    .font(.subheadline.weight(.semibold))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.6)
                 Text("\(countEvents(category: category.rawValue))")
                     .font(.title3.monospacedDigit())
             }
-            .frame(maxWidth: .infinity, minHeight: 72)
+            .frame(maxWidth: .infinity, minHeight: 60)
         }
         .buttonStyle(.borderedProminent)
     }
@@ -218,15 +260,15 @@ struct V3RecordingView: View {
         buttonTitle: String,
         action: @escaping () -> Void
     ) -> some View {
-        VStack(spacing: 10) {
+        VStack(spacing: 6) {
             Text(title)
-                .font(.headline)
+                .font(.subheadline.weight(.semibold))
                 .lineLimit(1)
                 .minimumScaleFactor(0.7)
 
             TimelineView(.periodic(from: .now, by: 1)) { context in
                 Text(state.elapsedText(at: context.date))
-                    .font(.system(size: 28, weight: .bold, design: .monospaced))
+                    .font(.system(size: 24, weight: .bold, design: .monospaced))
                     .frame(maxWidth: .infinity)
             }
 
@@ -235,15 +277,17 @@ struct V3RecordingView: View {
             } label: {
                 Text(buttonTitle)
                     .font(.subheadline.weight(.semibold))
-                    .frame(maxWidth: .infinity, minHeight: 44)
+                    .frame(maxWidth: .infinity, minHeight: 38)
             }
             .buttonStyle(.borderedProminent)
         }
         .frame(maxWidth: .infinity)
-        .padding(10)
+        .padding(8)
         .background(state.isRunning ? Color.blue.opacity(0.12) : Color.secondary.opacity(0.08))
         .clipShape(RoundedRectangle(cornerRadius: 8))
     }
+
+    // MARK: - Timer toggling (unchanged from previous V3 behavior)
 
     private func toggleTime() {
         let now = Date()
@@ -312,6 +356,8 @@ struct V3RecordingView: View {
         }
     }
 
+    // MARK: - Event saving
+
     private func recordScore(_ category: ScoringCategory) {
         let event = StatEvent(
             matchID: match.id,
@@ -355,6 +401,35 @@ struct V3RecordingView: View {
         try? modelContext.save()
     }
 
+    private func undoLastEvent() {
+        guard let target = undoableLastEvent else { return }
+        modelContext.delete(target)
+        try? modelContext.save()
+    }
+
+    // MARK: - Score totals
+
+    private func score(for teamID: UUID) -> Int {
+        scoreEvents
+            .filter { $0.teamID == teamID }
+            .reduce(0) { partial, event in
+                partial + scoreValue(for: event.category)
+            }
+    }
+
+    private func scoreValue(for category: String) -> Int {
+        switch ScoringCategory(rawValue: category) {
+        case .tryScore:
+            return 5
+        case .conversion:
+            return 2
+        case .penaltyGoal, .dropGoal:
+            return 3
+        case nil:
+            return 0
+        }
+    }
+
     private func teamName(for id: UUID) -> String {
         teams.first { $0.id == id }?.name ?? "チーム未設定"
     }
@@ -380,31 +455,30 @@ private struct V3SetPieceControl: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                Text(title)
-                    .font(.subheadline.weight(.semibold))
-                Spacer()
-                Text("\(successfulCount)/\(totalCount)")
-                    .font(.subheadline.monospacedDigit())
-                    .foregroundStyle(.secondary)
-            }
+        HStack(spacing: 8) {
+            Text(title)
+                .font(.subheadline.weight(.semibold))
+                .lineLimit(1)
+                .minimumScaleFactor(0.7)
+                .frame(width: 96, alignment: .leading)
 
-            HStack(spacing: 12) {
-                Button("成功") {
-                    onRecord(category, "success")
-                }
-                .frame(maxWidth: .infinity, minHeight: 44)
-                .buttonStyle(.borderedProminent)
-
-                Button("失敗") {
-                    onRecord(category, "fail")
-                }
-                .frame(maxWidth: .infinity, minHeight: 44)
-                .buttonStyle(.bordered)
+            Button("成功") {
+                onRecord(category, "success")
             }
+            .frame(maxWidth: .infinity, minHeight: 40)
+            .buttonStyle(.borderedProminent)
+
+            Button("失敗") {
+                onRecord(category, "fail")
+            }
+            .frame(maxWidth: .infinity, minHeight: 40)
+            .buttonStyle(.bordered)
+
+            Text("\(successfulCount)/\(totalCount)")
+                .font(.footnote.monospacedDigit())
+                .foregroundStyle(.secondary)
+                .frame(width: 40, alignment: .trailing)
         }
-        .padding(.vertical, 4)
     }
 }
 
