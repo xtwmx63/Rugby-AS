@@ -129,9 +129,11 @@ struct V3RecordingView: View {
     // MARK: - Half change
 
     private func switchToSecondHalf() {
-        // 段階2: Time を停止して 0:00 にリセット。
-        // BIP/Team1/Team2 はここでは触れない（段階3 で結合する）。
+        // 走行中の BIP/Team1/Team2 を既存の処理で停止し、最後の区間を保存して締める。
+        // Time を停止して 0:00 にリセットし、後半表示へ。
+        // BIP/Team1/Team2 の累積秒は意図的にリセットしない（試合通算のポゼッション計測のため）。
         let now = Date()
+        stopBIPAndTeams(at: now)
         if timeState.isRunning {
             _ = timeState.stop(at: now)
         }
