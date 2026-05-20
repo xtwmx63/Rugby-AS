@@ -49,6 +49,7 @@ struct MatchSummaryView: View {
 
     var body: some View {
         List {
+            matchupHeaderSection
             possessionSection
             scoringSummarySection
             setPieceSection
@@ -70,6 +71,52 @@ struct MatchSummaryView: View {
                 scoringEventForPlayerSelection = nil
             }
             .presentationDetents([.medium, .large])
+        }
+    }
+
+    private var matchupHeaderSection: some View {
+        Section {
+            HStack(spacing: 16) {
+                teamLogoColumn(teamID: match.homeTeamID)
+
+                Text("vs")
+                    .font(.title3.weight(.semibold))
+                    .foregroundStyle(.secondary)
+
+                teamLogoColumn(teamID: match.awayTeamID)
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 4)
+        }
+    }
+
+    @ViewBuilder
+    private func teamLogoColumn(teamID: UUID) -> some View {
+        VStack(spacing: 6) {
+            teamLogoThumbnail(teamID: teamID)
+            Text(teamName(for: teamID))
+                .font(.subheadline.weight(.semibold))
+                .lineLimit(2)
+                .multilineTextAlignment(.center)
+        }
+        .frame(maxWidth: .infinity)
+    }
+
+    @ViewBuilder
+    private func teamLogoThumbnail(teamID: UUID) -> some View {
+        let team = teams.first { $0.id == teamID }
+        if let team, let logoName = team.logoPath, let uiImage = ImageStorage.image(named: logoName) {
+            Image(uiImage: uiImage)
+                .resizable()
+                .scaledToFill()
+                .frame(width: 56, height: 56)
+                .clipShape(RoundedRectangle(cornerRadius: 8))
+        } else {
+            Image(systemName: "shield.fill")
+                .resizable()
+                .scaledToFit()
+                .frame(width: 56, height: 56)
+                .foregroundStyle(.secondary)
         }
     }
 
