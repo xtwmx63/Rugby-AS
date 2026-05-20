@@ -26,7 +26,10 @@ struct TeamListView: View {
                     NavigationLink {
                         TeamEditorView(team: team)
                     } label: {
-                        Text(team.name)
+                        HStack(spacing: 12) {
+                            teamListThumbnail(for: team)
+                            Text(team.name)
+                        }
                     }
                 }
             }
@@ -54,6 +57,23 @@ struct TeamListView: View {
         for number in 1...15 {
             let player = Player(teamID: team.id, number: number)
             modelContext.insert(player)
+        }
+    }
+
+    @ViewBuilder
+    private func teamListThumbnail(for team: Team) -> some View {
+        if let name = team.logoPath, let uiImage = ImageStorage.image(named: name) {
+            Image(uiImage: uiImage)
+                .resizable()
+                .scaledToFill()
+                .frame(width: 36, height: 36)
+                .clipShape(RoundedRectangle(cornerRadius: 6))
+        } else {
+            Image(systemName: "shield.fill")
+                .resizable()
+                .scaledToFit()
+                .frame(width: 36, height: 36)
+                .foregroundStyle(.secondary)
         }
     }
 }
