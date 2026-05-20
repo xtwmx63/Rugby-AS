@@ -174,28 +174,11 @@ struct V3RecordingView: View {
     // MARK: - Header band (Time / Score / Half)
 
     private var headerBand: some View {
-        HStack(spacing: 10) {
-            Text("Time")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-
-            TimelineView(.periodic(from: .now, by: 1)) { context in
-                Text(timeState.elapsedText(at: context.date))
-                    .font(.system(size: 26, weight: .bold, design: .monospaced))
-            }
-
-            Button(timeState.isRunning ? "停止" : "開始") {
-                toggleTime()
-            }
-            .buttonStyle(.borderedProminent)
-
+        HStack(spacing: 12) {
             Spacer()
 
-            Text("\(score(for: match.homeTeamID)) - \(score(for: match.awayTeamID))")
-                .font(.system(size: 22, weight: .bold, design: .monospaced))
-
+            // 左: 前後半トグル（Time の左へ移動）
             Button(isSecondHalf ? "後半" : "前半") {
-                // 後半は一方通行: 押しても何もしない（disabled で無効化済み）
                 if !isSecondHalf {
                     isShowingHalfChangeConfirmation = true
                 }
@@ -203,6 +186,26 @@ struct V3RecordingView: View {
             .buttonStyle(.bordered)
             .controlSize(.small)
             .disabled(isSecondHalf)
+
+            // 中央: ラベル "Time" の下に 00:00 を縦積み（BIP/チームと同じ並び方）
+            VStack(spacing: 2) {
+                Text("Time")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                TimelineView(.periodic(from: .now, by: 1)) { context in
+                    Text(timeState.elapsedText(at: context.date))
+                        .font(.system(size: 26, weight: .bold, design: .monospaced))
+                }
+            }
+
+            // 右: 開始/停止ボタン
+            Button(timeState.isRunning ? "停止" : "開始") {
+                toggleTime()
+            }
+            .buttonStyle(.borderedProminent)
+
+            Spacer()
         }
         .padding(.vertical, 8)
         .padding(.horizontal, 10)
@@ -213,23 +216,74 @@ struct V3RecordingView: View {
     // MARK: - Possession band (Team1 / BIP / Team2)
 
     private var possessionBand: some View {
-        HStack(spacing: 8) {
-            teamTimerPanel(
-                title: teamName(for: match.homeTeamID),
+        HStack(alignment: .top, spacing: 8) {
+            teamColumn(
+                teamID: match.homeTeamID,
                 state: team1State,
                 buttonTitle: team1State.isRunning ? "停止" : "開始",
                 action: toggleTeam1
             )
 
-            bipTimerPanel
+            bipColumn
 
-            teamTimerPanel(
-                title: teamName(for: match.awayTeamID),
+            teamColumn(
+                teamID: match.awayTeamID,
                 state: team2State,
                 buttonTitle: team2State.isRunning ? "停止" : "開始",
                 action: toggleTeam2
             )
         }
+    }
+
+    private func teamColumn(
+        teamID: UUID,
+        state: V3TimerState,
+        buttonTitle: String,
+        action: @escaping () -> Void
+    ) -> some View {
+        VStack(spacing: 8) {
+            teamLogoBox(for: teamID)
+
+            teamTimerPanel(
+                title: teamName(for: teamID),
+                state: state,
+                buttonTitle: buttonTitle,
+                action: action
+            )
+        }
+    }
+
+    private var bipColumn: some View {
+        VStack(spacing: 8) {
+            scoreDisplay
+            bipTimerPanel
+        }
+    }
+
+    // 上段の3ボックス（ロゴ/スコア/ロゴ）は同じ正方形サイズで揃える。
+    // スコア表示は内容が小さいので中央寄せして余白を持たせる。
+    private var scoreDisplay: some View {
+        VStack(spacing: 4) {
+            Spacer(minLength: 0)
+
+            Text("\(score(for: match.homeTeamID)) - \(score(for: match.awayTeamID))")
+                .font(.system(size: 26, weight: .bold, design: .monospaced))
+
+            VStack(spacing: 2) {
+                halfScoreLabel("1ST", half: 0)
+                halfScoreLabel("2ND", half: 1)
+            }
+            .font(.caption2.monospacedDigit())
+            .foregroundStyle(.secondary)
+
+            Spacer(minLength: 0)
+        }
+        .frame(maxWidth: .infinity)
+        .aspectRatio(1, contentMode: .fit)
+    }
+
+    private func halfScoreLabel(_ label: String, half: Int) -> some View {
+        Text("\(label) \(score(for: match.homeTeamID, half: half))-\(score(for: match.awayTeamID, half: half))")
     }
 
     private var bipTimerPanel: some View {
@@ -371,6 +425,27 @@ struct V3RecordingView: View {
         .clipShape(RoundedRectangle(cornerRadius: 8))
     }
 
+    @ViewBuilder
+    private func teamLogoBox(for teamID: UUID) -> some View {
+        let team = teams.first { $0.id == teamID }
+        Group {
+            if let team, let logoName = team.logoPath, let uiImage = ImageStorage.image(named: logoName) {
+                Image(uiImage: uiImage)
+                    .resizable()
+                    .scaledToFill()
+            } else {
+                Image(systemName: "shield.fill")
+                    .resizable()
+                    .scaledToFit()
+                    .foregroundStyle(.secondary)
+                    .padding(8)
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .aspectRatio(1, contentMode: .fit)
+        .clipShape(RoundedRectangle(cornerRadius: 6))
+    }
+
     // MARK: - Timer toggling (unchanged from previous V3 behavior)
 
     private func toggleTime() {
@@ -496,9 +571,11 @@ struct V3RecordingView: View {
 
     // MARK: - Score totals
 
-    private func score(for teamID: UUID) -> Int {
+    private func score(for teamID: UUID, half: Int? = nil) -> Int {
         scoreEvents
-            .filter { $0.teamID == teamID }
+            .filter { event in
+                event.teamID == teamID && (half == nil || event.half == half)
+            }
             .reduce(0) { partial, event in
                 partial + scoreValue(for: event.category)
             }
