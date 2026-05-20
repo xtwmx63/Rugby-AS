@@ -12,10 +12,13 @@ import SwiftData
 final class Team {
     @Attribute(.unique) var id: UUID
     var name: String
+    // ロゴ画像のファイル名（ドキュメントディレクトリ配下）。nil で未設定。
+    var logoPath: String?
 
-    init(id: UUID = UUID(), name: String) {
+    init(id: UUID = UUID(), name: String, logoPath: String? = nil) {
         self.id = id
         self.name = name
+        self.logoPath = logoPath
     }
 }
 
@@ -25,12 +28,15 @@ final class Player {
     var teamID: UUID
     var number: Int
     var name: String?
+    // 顔写真のファイル名（ドキュメントディレクトリ配下）。nil で未設定。
+    var imagePath: String?
 
-    init(id: UUID = UUID(), teamID: UUID, number: Int, name: String? = nil) {
+    init(id: UUID = UUID(), teamID: UUID, number: Int, name: String? = nil, imagePath: String? = nil) {
         self.id = id
         self.teamID = teamID
         self.number = number
         self.name = name
+        self.imagePath = imagePath
     }
 }
 
