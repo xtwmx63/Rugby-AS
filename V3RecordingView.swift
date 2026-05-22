@@ -319,8 +319,8 @@ struct V3RecordingView: View {
 
     private var inputTeamPicker: some View {
         Picker("入力対象", selection: inputTeamSelection) {
-            Text("ホーム: \(teamName(for: match.homeTeamID))").tag(match.homeTeamID)
-            Text("アウェイ: \(teamName(for: match.awayTeamID))").tag(match.awayTeamID)
+            Text(teamName(for: match.homeTeamID)).tag(match.homeTeamID)
+            Text(teamName(for: match.awayTeamID)).tag(match.awayTeamID)
         }
         .pickerStyle(.segmented)
     }
