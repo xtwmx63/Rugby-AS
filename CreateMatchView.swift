@@ -15,7 +15,6 @@ struct CreateMatchView: View {
     @Query(sort: \Team.name) private var teams: [Team]
 
     @AppStorage("lastMatchDateTimestamp") private var lastMatchDateTimestamp = Date().timeIntervalSince1970
-    @AppStorage("defaultHomeTeamName") private var defaultHomeTeamName = "自チーム"
 
     @State private var selectedTournamentID: UUID?
     @State private var newTournamentName = ""
@@ -86,9 +85,6 @@ struct CreateMatchView: View {
         }
         .onAppear {
             playedAt = Date(timeIntervalSince1970: lastMatchDateTimestamp)
-            if newHomeTeamName.isEmpty {
-                newHomeTeamName = defaultHomeTeamName
-            }
         }
         .alert(alertTitle, isPresented: alertBinding) {
             Button("OK", role: .cancel) {}
