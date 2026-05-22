@@ -168,18 +168,8 @@ struct MatchSummaryView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 Spacer()
-                Text(teamName(for: match.homeTeamID))
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.7)
-                    .frame(width: 72, alignment: .trailing)
-                Text(teamName(for: match.awayTeamID))
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.7)
-                    .frame(width: 72, alignment: .trailing)
+                summaryTeamHeader(match.homeTeamID)
+                summaryTeamHeader(match.awayTeamID)
             }
 
             scoringComparisonRow(.tryScore)
@@ -203,8 +193,17 @@ struct MatchSummaryView: View {
 
     private var setPieceSection: some View {
         Section("セットプレー") {
-            setPieceRow(title: "ラインアウト", category: "lineout")
-            setPieceRow(title: "スクラム", category: "scrum")
+            HStack {
+                Text("種別")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Spacer()
+                summaryTeamHeader(match.homeTeamID)
+                summaryTeamHeader(match.awayTeamID)
+            }
+
+            setPieceComparisonRow(title: "ラインアウト", category: "lineout")
+            setPieceComparisonRow(title: "スクラム", category: "scrum")
         }
     }
 
@@ -271,6 +270,15 @@ struct MatchSummaryView: View {
         }
     }
 
+    private func summaryTeamHeader(_ teamID: UUID) -> some View {
+        Text(teamName(for: teamID))
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            .lineLimit(1)
+            .minimumScaleFactor(0.7)
+            .frame(width: 72, alignment: .trailing)
+    }
+
     private func possessionRow(teamID: UUID, seconds: Int, ratio: Double) -> some View {
         HStack {
             Text(teamName(for: teamID))
@@ -280,21 +288,29 @@ struct MatchSummaryView: View {
         }
     }
 
-    private func setPieceRow(title: String, category: String) -> some View {
-        let events = setPieceEvents.filter { $0.category == category }
+    private func setPieceComparisonRow(title: String, category: String) -> some View {
+        HStack {
+            Text(title)
+            Spacer()
+            setPieceSummary(category: category, teamID: match.homeTeamID)
+            setPieceSummary(category: category, teamID: match.awayTeamID)
+        }
+    }
+
+    private func setPieceSummary(category: String, teamID: UUID) -> some View {
+        let events = setPieceEvents.filter { $0.category == category && $0.teamID == teamID }
         let successCount = events.filter { $0.outcome == "success" }.count
         let totalCount = events.count
         let rate = totalCount == 0 ? 0 : Double(successCount) / Double(totalCount)
 
-        return HStack {
-            Text(title)
-            Spacer()
-            Text("\(successCount)/\(totalCount)")
-                .font(.body.monospacedDigit())
+        return VStack(alignment: .trailing, spacing: 2) {
             Text(percentText(rate))
                 .font(.body.monospacedDigit())
+            Text("\(successCount)/\(totalCount)")
+                .font(.caption.monospacedDigit())
                 .foregroundStyle(.secondary)
         }
+        .frame(width: 72, alignment: .trailing)
     }
 
     private func possessionSeconds(teamID: UUID) -> Int {
