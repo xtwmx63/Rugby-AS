@@ -163,13 +163,41 @@ struct MatchSummaryView: View {
 
     private var scoringSummarySection: some View {
         Section("得点") {
-            scoringSummaryRow(.tryScore)
-            scoringSummaryRow(.conversion)
-            scoringSummaryRow(.penaltyGoal)
-            scoringSummaryRow(.dropGoal)
+            HStack {
+                Text("種別")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Text(teamName(for: match.homeTeamID))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
+                    .frame(width: 72, alignment: .trailing)
+                Text(teamName(for: match.awayTeamID))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
+                    .frame(width: 72, alignment: .trailing)
+            }
 
-            scoreRow(teamID: match.homeTeamID)
-            scoreRow(teamID: match.awayTeamID)
+            scoringComparisonRow(.tryScore)
+            scoringComparisonRow(.conversion)
+            scoringComparisonRow(.penaltyGoal)
+            scoringComparisonRow(.dropGoal)
+
+            HStack {
+                Text("合計")
+                    .font(.headline)
+                Spacer()
+                Text("\(score(for: match.homeTeamID))点")
+                    .font(.headline.monospacedDigit())
+                    .frame(width: 72, alignment: .trailing)
+                Text("\(score(for: match.awayTeamID))点")
+                    .font(.headline.monospacedDigit())
+                    .frame(width: 72, alignment: .trailing)
+            }
         }
     }
 
@@ -222,16 +250,6 @@ struct MatchSummaryView: View {
         }
     }
 
-    private func scoreRow(teamID: UUID) -> some View {
-        HStack {
-            Text(teamName(for: teamID))
-                .font(.headline)
-            Spacer()
-            Text("\(score(for: teamID))点")
-                .font(.headline.monospacedDigit())
-        }
-    }
-
     private func score(for teamID: UUID) -> Int {
         scoringEvents
             .filter { $0.teamID == teamID }
@@ -240,12 +258,16 @@ struct MatchSummaryView: View {
             }
     }
 
-    private func scoringSummaryRow(_ category: ScoringCategory) -> some View {
+    private func scoringComparisonRow(_ category: ScoringCategory) -> some View {
         HStack {
             Text(category.displayName)
             Spacer()
-            Text("\(countScoring(category))回")
+            Text("\(countScoring(category, teamID: match.homeTeamID))回")
                 .font(.body.monospacedDigit())
+                .frame(width: 72, alignment: .trailing)
+            Text("\(countScoring(category, teamID: match.awayTeamID))回")
+                .font(.body.monospacedDigit())
+                .frame(width: 72, alignment: .trailing)
         }
     }
 
@@ -307,8 +329,8 @@ struct MatchSummaryView: View {
         return homeSeconds + awaySeconds
     }
 
-    private func countScoring(_ category: ScoringCategory) -> Int {
-        scoringEvents.filter { $0.category == category.rawValue }.count
+    private func countScoring(_ category: ScoringCategory, teamID: UUID) -> Int {
+        scoringEvents.filter { $0.category == category.rawValue && $0.teamID == teamID }.count
     }
 
     private func scoreValue(for category: String) -> Int {
