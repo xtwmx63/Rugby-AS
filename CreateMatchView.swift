@@ -51,7 +51,7 @@ struct CreateMatchView: View {
                 )
 
                 TeamSelectionFields(
-                    title: "相手",
+                    title: "アウェイ",
                     selectedTeamID: $selectedAwayTeamID,
                     newTeamName: $newAwayTeamName,
                     teams: teams
@@ -132,7 +132,7 @@ struct CreateMatchView: View {
 
     private func saveMatch(shouldStartRecording: Bool) {
         guard canSave else {
-            showAlert(title: "保存できませんでした", message: "大会、ホームチーム、相手チームを入力してください。")
+            showAlert(title: "保存できませんでした", message: "大会、ホームチーム、アウェイチームを入力してください。")
             return
         }
 
@@ -141,7 +141,7 @@ struct CreateMatchView: View {
         let awayTeam = selectedTeam(id: selectedAwayTeamID) ?? createTeam(name: trimmed(newAwayTeamName))
 
         guard homeTeam.id != awayTeam.id else {
-            showAlert(title: "保存できませんでした", message: "ホームと相手には別のチームを選んでください。")
+            showAlert(title: "保存できませんでした", message: "ホームとアウェイには別のチームを選んでください。")
             return
         }
 
