@@ -253,7 +253,7 @@ struct MatchSummaryView: View {
         scoringEvents
             .filter { $0.teamID == teamID }
             .reduce(0) { partialResult, event in
-                partialResult + scoreValue(for: event.category)
+                partialResult + scoreValue(for: event)
             }
     }
 
@@ -349,8 +349,10 @@ struct MatchSummaryView: View {
         scoringEvents.filter { $0.category == category.rawValue && $0.teamID == teamID }.count
     }
 
-    private func scoreValue(for category: String) -> Int {
-        switch ScoringCategory(rawValue: category) {
+    private func scoreValue(for event: StatEvent) -> Int {
+        guard event.outcome == "success" else { return 0 }
+
+        switch ScoringCategory(rawValue: event.category) {
         case .tryScore:
             return 5
         case .conversion:

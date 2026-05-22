@@ -23,6 +23,8 @@ struct V3RecordingView: View {
     @State private var team2State = V3TimerState()
     @State private var selectedInputTeamID: UUID?
     @State private var scoringEventForPlayerSelection: StatEvent?
+    @State private var pendingKickAttempt: PendingKickAttempt?
+    @State private var isShowingKickPlayerSelection = false
     @State private var isSecondHalf = false
     @State private var isShowingFinishConfirmation = false
     @State private var isShowingHalfChangeConfirmation = false
@@ -73,17 +75,23 @@ struct V3RecordingView: View {
     }
 
     var body: some View {
-        VStack(spacing: 12) {
-            headerBand
-            possessionBand
-            inputTeamPicker
-            scoringRow
-            setPieceCompact
-            Spacer(minLength: 0)
-            undoBand
+        ZStack {
+            VStack(spacing: 12) {
+                headerBand
+                possessionBand
+                inputTeamPicker
+                scoringRow
+                setPieceCompact
+                Spacer(minLength: 0)
+                undoBand
+            }
+            .padding(.horizontal)
+            .padding(.vertical, 8)
+
+            if pendingKickAttempt?.hasSelectedPlayer == true {
+                kickResultPanel
+            }
         }
-        .padding(.horizontal)
-        .padding(.vertical, 8)
         .navigationTitle("V3 記録")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
@@ -124,12 +132,22 @@ struct V3RecordingView: View {
             }
         }
         .sheet(item: $scoringEventForPlayerSelection) { event in
-            PlayerSelectionSheet(players: selectedTeamPlayers, title: "得点者を選択") { player in
+            PlayerSelectionSheet(players: players(for: event), title: playerSelectionTitle(for: event)) { player in
                 event.playerID = player?.id
                 try? modelContext.save()
                 scoringEventForPlayerSelection = nil
             }
             .presentationDetents([.medium, .large])
+        }
+        .sheet(isPresented: $isShowingKickPlayerSelection) {
+            if let attempt = pendingKickAttempt {
+                PlayerSelectionSheet(players: players(forTeamID: attempt.teamID), title: playerSelectionTitle(for: attempt.category)) { player in
+                    pendingKickAttempt?.playerID = player?.id
+                    pendingKickAttempt?.hasSelectedPlayer = true
+                    isShowingKickPlayerSelection = false
+                }
+                .presentationDetents([.medium, .large])
+            }
         }
     }
 
@@ -375,6 +393,50 @@ struct V3RecordingView: View {
 
     // MARK: - Subviews
 
+    private var kickResultPanel: some View {
+        VStack(spacing: 14) {
+            Text(pendingKickAttempt?.category.displayName ?? "キック")
+                .font(.headline)
+            HStack(spacing: 8) {
+                Button {
+                    recordPendingKick(outcome: "success")
+                } label: {
+                    Text("成功")
+                        .font(.title.weight(.bold))
+                        .foregroundStyle(.green)
+                        .frame(maxWidth: .infinity, minHeight: 86)
+                        .background(Color.green.opacity(0.28))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 2)
+                                .stroke(Color.green, lineWidth: 2)
+                        )
+                }
+                .buttonStyle(.plain)
+
+                Button {
+                    recordPendingKick(outcome: "fail")
+                } label: {
+                    Text("失敗")
+                        .font(.title.weight(.bold))
+                        .foregroundStyle(.red)
+                        .frame(maxWidth: .infinity, minHeight: 86)
+                        .background(Color.red.opacity(0.22))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 2)
+                                .stroke(Color.red, lineWidth: 2)
+                        )
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(16)
+        .frame(maxWidth: 360)
+        .background(.regularMaterial)
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .shadow(radius: 12)
+        .padding(.horizontal, 24)
+    }
+
     private func scoringButton(_ category: ScoringCategory) -> some View {
         Button {
             recordScore(category)
@@ -517,18 +579,81 @@ struct V3RecordingView: View {
 
     // MARK: - Event saving
 
+    private func players(for event: StatEvent) -> [Player] {
+        guard let teamID = event.teamID else { return selectedTeamPlayers }
+        return players(forTeamID: teamID)
+    }
+
+    private func players(forTeamID teamID: UUID) -> [Player] {
+        allPlayers
+            .filter { $0.teamID == teamID }
+            .sorted { $0.number < $1.number }
+    }
+
+    private func playerSelectionTitle(for event: StatEvent) -> String {
+        guard let category = ScoringCategory(rawValue: event.category) else {
+            return "得点者を選択"
+        }
+        return playerSelectionTitle(for: category)
+    }
+
+    private func playerSelectionTitle(for category: ScoringCategory) -> String {
+        category.requiresResultSelection ? "キッカーを選択" : "得点者を選択"
+    }
+
     private func recordScore(_ category: ScoringCategory) {
+        if category.requiresResultSelection {
+            pendingKickAttempt = PendingKickAttempt(
+                category: category,
+                teamID: selectedInputTeam,
+                seconds: timeState.elapsedSeconds(at: Date()),
+                half: currentHalf
+            )
+            isShowingKickPlayerSelection = true
+            return
+        }
+
+        saveScoreEvent(category: category, outcome: "success", opensPlayerSheet: true)
+    }
+
+    private func recordPendingKick(outcome: String) {
+        guard let attempt = pendingKickAttempt else { return }
+        pendingKickAttempt = nil
+        saveScoreEvent(
+            category: attempt.category,
+            outcome: outcome,
+            teamID: attempt.teamID,
+            playerID: attempt.playerID,
+            seconds: attempt.seconds,
+            half: attempt.half,
+            opensPlayerSheet: false
+        )
+    }
+
+    private func saveScoreEvent(
+        category: ScoringCategory,
+        outcome: String,
+        teamID: UUID? = nil,
+        playerID: UUID? = nil,
+        seconds: Int? = nil,
+        half: Int? = nil,
+        opensPlayerSheet: Bool
+    ) {
         let event = StatEvent(
             matchID: match.id,
-            teamID: selectedInputTeam,
+            teamID: teamID ?? selectedInputTeam,
+            playerID: playerID,
             category: category.rawValue,
-            outcome: "success",
-            seconds: timeState.elapsedSeconds(at: Date()),
-            half: currentHalf
+            outcome: outcome,
+            seconds: seconds ?? timeState.elapsedSeconds(at: Date()),
+            half: half ?? currentHalf
         )
         modelContext.insert(event)
         try? modelContext.save()
-        scoringEventForPlayerSelection = event
+
+        if opensPlayerSheet {
+            scoringEventForPlayerSelection = event
+        }
     }
 
     private func countEvents(category: String) -> Int {
@@ -577,12 +702,14 @@ struct V3RecordingView: View {
                 event.teamID == teamID && (half == nil || event.half == half)
             }
             .reduce(0) { partial, event in
-                partial + scoreValue(for: event.category)
+                partial + scoreValue(for: event)
             }
     }
 
-    private func scoreValue(for category: String) -> Int {
-        switch ScoringCategory(rawValue: category) {
+    private func scoreValue(for event: StatEvent) -> Int {
+        guard event.outcome == "success" else { return 0 }
+
+        switch ScoringCategory(rawValue: event.category) {
         case .tryScore:
             return 5
         case .conversion:
@@ -644,6 +771,15 @@ private struct V3SetPieceControl: View {
                 .frame(width: 40, alignment: .trailing)
         }
     }
+}
+
+private struct PendingKickAttempt {
+    let category: ScoringCategory
+    let teamID: UUID
+    let seconds: Int
+    let half: Int
+    var playerID: UUID?
+    var hasSelectedPlayer = false
 }
 
 private struct V3TimerState {

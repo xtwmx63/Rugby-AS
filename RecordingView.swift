@@ -450,12 +450,14 @@ struct RecordingView: View {
         scoreEvents
             .filter { $0.teamID == teamID }
             .reduce(0) { partialResult, event in
-                partialResult + scoreValue(for: event.category)
+                partialResult + scoreValue(for: event)
             }
     }
 
-    private func scoreValue(for category: String) -> Int {
-        switch ScoringCategory(rawValue: category) {
+    private func scoreValue(for event: StatEvent) -> Int {
+        guard event.outcome == "success" else { return 0 }
+
+        switch ScoringCategory(rawValue: event.category) {
         case .tryScore:
             return 5
         case .conversion:
@@ -538,6 +540,15 @@ enum ScoringCategory: String {
             return "PG"
         case .dropGoal:
             return "DG"
+        }
+    }
+
+    var requiresResultSelection: Bool {
+        switch self {
+        case .conversion, .penaltyGoal, .dropGoal:
+            return true
+        case .tryScore:
+            return false
         }
     }
 }
