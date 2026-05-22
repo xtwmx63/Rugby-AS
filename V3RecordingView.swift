@@ -24,10 +24,15 @@ struct V3RecordingView: View {
     @State private var selectedInputTeamID: UUID?
     @State private var scoringEventForPlayerSelection: StatEvent?
     @State private var pendingKickAttempt: PendingKickAttempt?
-    @State private var isShowingKickPlayerSelection = false
+    @State private var pendingSetPieceAttempt: PendingSetPieceAttempt?
     @State private var isSecondHalf = false
     @State private var isShowingFinishConfirmation = false
     @State private var isShowingHalfChangeConfirmation = false
+
+    private let homeAccent = Color.blue
+    private let awayAccent = Color.red
+    private let fieldBackground = Color(red: 0.02, green: 0.06, blue: 0.10)
+    private let cardBackground = Color(red: 0.04, green: 0.12, blue: 0.18)
 
     private var selectedTeamPlayers: [Player] {
         allPlayers
@@ -51,22 +56,10 @@ struct V3RecordingView: View {
         selectedInputTeamID ?? match.homeTeamID
     }
 
-    private var inputTeamSelection: Binding<UUID> {
-        Binding(
-            get: { selectedInputTeam },
-            set: { selectedInputTeamID = $0 }
-        )
-    }
-
-    // 取り消し対象は「直前に手動で記録した1件」= 得点・セットプレーのうち最新。
-    // ポゼッションは V3 のタイマー連動で自動保存されるため、ここでは触れない。
-    // 現在の半分（前半=0, 後半=1）。StatEvent.half に保存する値。
     private var currentHalf: Int {
         isSecondHalf ? 1 : 0
     }
 
-    // 取り消し対象は (half, seconds) の組で最大、つまり「最新の手動記録」。
-    // 後半でも前半の seconds が大きい場合に誤って前半側を取らないよう半分で先に比較する。
     private var undoableLastEvent: StatEvent? {
         matchEvents
             .filter { $0.category != "possession" }
@@ -74,34 +67,45 @@ struct V3RecordingView: View {
             .first
     }
 
-    var body: some View {
-        ZStack {
-            VStack(spacing: 12) {
-                headerBand
-                possessionBand
-                inputTeamPicker
-                scoringRow
-                setPieceCompact
-                Spacer(minLength: 0)
-                undoBand
-            }
-            .padding(.horizontal)
-            .padding(.vertical, 8)
+    private var bottomPanelIsPresented: Bool {
+        pendingKickAttempt != nil || pendingSetPieceAttempt != nil
+    }
 
-            if pendingKickAttempt?.hasSelectedPlayer == true {
-                kickResultPanel
+    private var inputTeamSwipeGesture: some Gesture {
+        DragGesture(minimumDistance: 36)
+            .onEnded { value in
+                switchInputTeamIfNeeded(width: value.translation.width, height: value.translation.height)
+            }
+    }
+
+    var body: some View {
+        ZStack(alignment: .bottom) {
+            fieldBackground.ignoresSafeArea()
+
+            VStack(spacing: 6) {
+                topBar
+                clockCard
+                scoreCard
+                possessionDashboard
+                inputTargetCard
+                actionGrid
+                undoButton
+            }
+            .padding(.horizontal, 8)
+            .padding(.top, 4)
+            .padding(.bottom, 8)
+            .simultaneousGesture(inputTeamSwipeGesture)
+
+            if pendingKickAttempt != nil {
+                kickEntryPanel
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+            } else if pendingSetPieceAttempt != nil {
+                setPieceResultPanel
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
             }
         }
-        .navigationTitle("V3 記録")
-        .navigationBarTitleDisplayMode(.inline)
-        .toolbar {
-            ToolbarItem(placement: .topBarTrailing) {
-                Button("試合終了") {
-                    isShowingFinishConfirmation = true
-                }
-                .tint(.red)
-            }
-        }
+        .navigationBarBackButtonHidden(true)
+        .toolbar(.hidden, for: .navigationBar)
         .confirmationDialog(
             "この試合を終了しますか？",
             isPresented: $isShowingFinishConfirmation,
@@ -139,24 +143,619 @@ struct V3RecordingView: View {
             }
             .presentationDetents([.medium, .large])
         }
-        .sheet(isPresented: $isShowingKickPlayerSelection) {
-            if let attempt = pendingKickAttempt {
-                PlayerSelectionSheet(players: players(forTeamID: attempt.teamID), title: playerSelectionTitle(for: attempt.category)) { player in
-                    pendingKickAttempt?.playerID = player?.id
-                    pendingKickAttempt?.hasSelectedPlayer = true
-                    isShowingKickPlayerSelection = false
+    }
+
+    // MARK: - Main layout
+
+    private var topBar: some View {
+        ZStack {
+            Text("試合記録")
+                .font(.title2.weight(.bold))
+                .foregroundStyle(.white)
+
+            HStack {
+                Button {
+                    dismiss()
+                } label: {
+                    Image(systemName: "chevron.left")
+                        .font(.title3.weight(.bold))
+                        .frame(width: 42, height: 42)
+                        .background(cardBackground)
+                        .clipShape(RoundedRectangle(cornerRadius: 8))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 8)
+                                .stroke(Color.white.opacity(0.14), lineWidth: 1)
+                        )
                 }
-                .presentationDetents([.medium, .large])
+                .buttonStyle(.plain)
+                .foregroundStyle(.white)
+
+                Spacer()
+
+                Button("試合終了") {
+                    isShowingFinishConfirmation = true
+                }
+                .font(.headline.weight(.bold))
+                .foregroundStyle(.red)
+                .frame(width: 96, height: 42)
+                .background(cardBackground)
+                .clipShape(RoundedRectangle(cornerRadius: 8))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8)
+                        .stroke(Color.red, lineWidth: 1.5)
+                )
             }
+        }
+    }
+
+    private var clockCard: some View {
+        ZStack {
+            TimelineView(.periodic(from: .now, by: 1)) { context in
+                Text(timeState.elapsedText(at: context.date))
+                    .font(.system(size: 34, weight: .bold, design: .monospaced))
+                    .foregroundStyle(.white)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.55)
+                    .frame(width: 112)
+            }
+
+            HStack {
+                Button(isSecondHalf ? "後半" : "前半") {
+                    if !isSecondHalf {
+                        isShowingHalfChangeConfirmation = true
+                    }
+                }
+                .font(.headline.weight(.bold))
+                .foregroundStyle(homeAccent)
+                .frame(width: 58, height: 36)
+                .background(Color.white.opacity(0.06))
+                .clipShape(RoundedRectangle(cornerRadius: 8))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8)
+                        .stroke(Color.white.opacity(0.12), lineWidth: 1)
+                )
+                .disabled(isSecondHalf)
+
+                Spacer()
+
+                Button(timeState.isRunning ? "停止" : "開始") {
+                    toggleTime()
+                }
+                .font(.headline.weight(.bold))
+                .foregroundStyle(.white)
+                .frame(width: 86, height: 44)
+                .background(homeAccent)
+                .clipShape(RoundedRectangle(cornerRadius: 8))
+            }
+        }
+        .padding(8)
+        .recordingCardBackground()
+    }
+
+    private var scoreCard: some View {
+        ZStack {
+            VStack(spacing: 4) {
+                Text("\(score(for: match.homeTeamID)) - \(score(for: match.awayTeamID))")
+                    .font(.system(size: 32, weight: .bold, design: .rounded))
+                    .foregroundStyle(.white)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.6)
+
+                HStack(spacing: 10) {
+                    halfScoreLabel("1ST", half: 0)
+                    halfScoreLabel("2ND", half: 1)
+                }
+                .font(.caption2.monospacedDigit())
+                .foregroundStyle(.white.opacity(0.72))
+            }
+            .frame(width: 168)
+
+            HStack(spacing: 10) {
+                teamIdentity(teamID: match.homeTeamID, label: "HOME", accent: homeAccent, alignment: .leading)
+
+                Spacer()
+
+                teamIdentity(teamID: match.awayTeamID, label: "AWAY", accent: awayAccent, alignment: .trailing)
+            }
+        }
+        .padding(8)
+        .recordingCardBackground()
+    }
+
+    private func teamIdentity(teamID: UUID, label: String, accent: Color, alignment: HorizontalAlignment) -> some View {
+        VStack(alignment: alignment, spacing: 3) {
+            teamLogoBox(for: teamID)
+                .frame(width: 48, height: 48)
+
+            Text(teamName(for: teamID))
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.white)
+                .lineLimit(1)
+                .minimumScaleFactor(0.6)
+                .multilineTextAlignment(alignment == .leading ? .leading : .trailing)
+                .frame(width: 80, alignment: alignment == .leading ? .leading : .trailing)
+
+            Text(label)
+                .font(.caption2.weight(.black))
+                .foregroundStyle(accent)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 2)
+                .background(accent.opacity(0.18))
+                .clipShape(RoundedRectangle(cornerRadius: 4))
+        }
+        .frame(width: 78, alignment: alignment == .leading ? .leading : .trailing)
+    }
+
+    private var possessionDashboard: some View {
+        VStack(spacing: 6) {
+            Label("BIP / ポゼッション", systemImage: "clock")
+                .font(.subheadline.weight(.bold))
+                .foregroundStyle(.white)
+
+            HStack(spacing: 6) {
+                possessionTile(
+                    label: "HOME",
+                    teamName: teamName(for: match.homeTeamID),
+                    accent: homeAccent,
+                    state: team1State,
+                    buttonTitle: team1State.isRunning ? "停止中" : "開始",
+                    action: toggleTeam1
+                )
+
+                possessionTile(
+                    label: "BIP",
+                    teamName: "BIP",
+                    accent: .orange,
+                    state: bipState,
+                    buttonTitle: bipState.isRunning ? "一時停止中" : "開始",
+                    action: toggleBIP
+                )
+
+                possessionTile(
+                    label: "AWAY",
+                    teamName: teamName(for: match.awayTeamID),
+                    accent: awayAccent,
+                    state: team2State,
+                    buttonTitle: team2State.isRunning ? "停止中" : "開始",
+                    action: toggleTeam2
+                )
+            }
+        }
+        .padding(8)
+        .recordingCardBackground()
+    }
+
+    private func possessionTile(
+        label: String,
+        teamName: String,
+        accent: Color,
+        state: V3TimerState,
+        buttonTitle: String,
+        action: @escaping () -> Void
+    ) -> some View {
+        VStack(spacing: 4) {
+            HStack(spacing: 5) {
+                Text(label)
+                    .font(.caption2.weight(.black))
+                    .foregroundStyle(.white)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.65)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .frame(minWidth: 42)
+                    .background(accent.opacity(0.7))
+                    .clipShape(RoundedRectangle(cornerRadius: 4))
+
+                Text(teamName)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.white.opacity(0.78))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.6)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+
+            TimelineView(.periodic(from: .now, by: 1)) { context in
+                Text(state.elapsedText(at: context.date))
+                    .font(.system(size: 22, weight: .bold, design: .monospaced))
+                    .foregroundStyle(.white)
+                    .minimumScaleFactor(0.55)
+            }
+
+            Button {
+                action()
+            } label: {
+                Text(buttonTitle)
+                    .font(.subheadline.weight(.bold))
+                    .foregroundStyle(.white)
+                    .frame(maxWidth: .infinity, minHeight: 32)
+            }
+            .buttonStyle(.plain)
+            .background(accent)
+            .clipShape(RoundedRectangle(cornerRadius: 8))
+            .disabled(label == "BIP" && !timeState.isRunning)
+            .opacity(label == "BIP" && !timeState.isRunning ? 0.45 : 1)
+        }
+        .padding(6)
+        .background(Color.black.opacity(0.18))
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .overlay(
+            RoundedRectangle(cornerRadius: 8)
+                .stroke(Color.white.opacity(0.08), lineWidth: 1)
+        )
+    }
+
+    private var inputTargetCard: some View {
+        HStack(spacing: 10) {
+            Label("記録対象", systemImage: "person.3")
+                .font(.headline.weight(.bold))
+                .foregroundStyle(.white)
+                .frame(width: 96, alignment: .leading)
+
+            targetButton(title: "HOME", teamID: match.homeTeamID, accent: homeAccent)
+            targetButton(title: "AWAY", teamID: match.awayTeamID, accent: awayAccent)
+        }
+        .padding(8)
+        .recordingCardBackground()
+    }
+
+    private func targetButton(title: String, teamID: UUID, accent: Color) -> some View {
+        Button {
+            withAnimation(.easeInOut(duration: 0.16)) {
+                selectedInputTeamID = teamID
+            }
+        } label: {
+            Text(title)
+                .font(.headline.weight(.bold))
+                .foregroundStyle(selectedInputTeam == teamID ? .white : .white.opacity(0.7))
+                .frame(maxWidth: .infinity, minHeight: 34)
+                .background(selectedInputTeam == teamID ? accent : Color.clear)
+                .clipShape(RoundedRectangle(cornerRadius: 8))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8)
+                        .stroke(Color.white.opacity(0.16), lineWidth: 1)
+                )
+        }
+        .buttonStyle(.plain)
+    }
+
+    private var actionGrid: some View {
+        LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 8) {
+            scoringCard(.tryScore, accent: .green, symbol: "rugbyball")
+            scoringCard(.conversion, accent: .purple, symbol: "figure.rugby")
+            scoringCard(.penaltyGoal, accent: .blue, symbol: "p.circle")
+            scoringCard(.dropGoal, accent: .yellow, symbol: "d.circle")
+            setPieceRow(title: "ラインアウト", category: "lineout", symbol: "figure.strengthtraining.traditional", accent: .teal)
+            setPieceRow(title: "スクラム", category: "scrum", symbol: "person.3.fill", accent: .indigo)
+        }
+        .padding(8)
+        .recordingCardBackground()
+    }
+
+    private func scoringCard(_ category: ScoringCategory, accent: Color, symbol: String) -> some View {
+        Button {
+            recordScore(category)
+        } label: {
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(spacing: 10) {
+                    Image(systemName: symbol)
+                        .font(.title3.weight(.bold))
+                        .frame(width: 26)
+                    Text(category.displayName)
+                        .font(.subheadline.weight(.bold))
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.42)
+                    Spacer(minLength: 0)
+                }
+
+                HStack {
+                    Spacer()
+                    Text("\(countEvents(category: category.rawValue))")
+                        .font(.title2.weight(.bold).monospacedDigit())
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.7)
+                }
+            }
+            .foregroundStyle(.white)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .frame(maxWidth: .infinity)
+            .frame(height: 68)
+            .background(accent.opacity(0.72))
+            .clipShape(RoundedRectangle(cornerRadius: 8))
+            .overlay(
+                RoundedRectangle(cornerRadius: 8)
+                    .stroke(accent.opacity(0.8), lineWidth: 1)
+            )
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func setPieceRow(title: String, category: String, symbol: String, accent: Color) -> some View {
+        let events = setPieceEvents.filter { $0.category == category && $0.teamID == selectedInputTeam }
+        let successCount = events.filter { $0.outcome == "success" }.count
+        let totalCount = events.count
+
+        return Button {
+            pendingKickAttempt = nil
+            pendingSetPieceAttempt = PendingSetPieceAttempt(
+                title: title,
+                category: category,
+                symbol: symbol,
+                teamID: selectedInputTeam,
+                seconds: timeState.elapsedSeconds(at: Date()),
+                half: currentHalf
+            )
+        } label: {
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(spacing: 10) {
+                    Image(systemName: symbol)
+                        .font(.title3.weight(.bold))
+                        .frame(width: 26)
+
+                    Text(title)
+                        .font(.subheadline.weight(.bold))
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.42)
+                    Spacer(minLength: 0)
+                }
+
+                HStack {
+                    Spacer()
+                    Text("\(successCount)/\(totalCount)")
+                        .font(.title2.weight(.bold).monospacedDigit())
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.7)
+                }
+            }
+            .foregroundStyle(.white)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .frame(maxWidth: .infinity)
+            .frame(height: 68)
+            .background(accent.opacity(0.58))
+            .clipShape(RoundedRectangle(cornerRadius: 8))
+            .overlay(
+                RoundedRectangle(cornerRadius: 8)
+                    .stroke(accent.opacity(0.75), lineWidth: 1)
+            )
+        }
+        .buttonStyle(.plain)
+    }
+
+    private var undoButton: some View {
+        Button {
+            undoLastEvent()
+        } label: {
+            Text("取り消し")
+                .font(.headline.weight(.bold))
+                .foregroundStyle(.red)
+                .frame(maxWidth: .infinity, minHeight: 36)
+                .background(Color.red.opacity(0.18))
+                .clipShape(RoundedRectangle(cornerRadius: 8))
+        }
+        .buttonStyle(.plain)
+        .disabled(undoableLastEvent == nil)
+        .opacity(undoableLastEvent == nil ? 0.45 : 1)
+    }
+
+    private var setPieceResultPanel: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Capsule()
+                .fill(Color.white.opacity(0.28))
+                .frame(width: 74, height: 5)
+                .frame(maxWidth: .infinity)
+
+            HStack(spacing: 10) {
+                Image(systemName: pendingSetPieceAttempt?.symbol ?? "sportscourt")
+                    .font(.title3.weight(.bold))
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(pendingSetPieceAttempt?.title ?? "セットプレー")
+                        .font(.title3.weight(.bold))
+                    Text("結果を記録")
+                        .font(.footnote)
+                        .foregroundStyle(.white.opacity(0.72))
+                }
+                Spacer()
+            }
+            .foregroundStyle(.white)
+
+            resultButtons(
+                successAction: { recordPendingSetPiece(outcome: "success") },
+                failureAction: { recordPendingSetPiece(outcome: "fail") }
+            )
+        }
+        .padding(16)
+        .background(.ultraThinMaterial)
+        .clipShape(RoundedRectangle(cornerRadius: 18))
+        .overlay(
+            RoundedRectangle(cornerRadius: 18)
+                .stroke(Color.white.opacity(0.12), lineWidth: 1)
+        )
+        .shadow(radius: 16)
+    }
+
+    private var kickEntryPanel: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Capsule()
+                .fill(Color.white.opacity(0.28))
+                .frame(width: 74, height: 5)
+                .frame(maxWidth: .infinity)
+
+            HStack(spacing: 10) {
+                Image(systemName: "scope")
+                    .font(.title3.weight(.bold))
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(pendingKickAttempt?.category.displayName ?? "キック")
+                        .font(.title3.weight(.bold))
+                    Text("キッカーを選択してください")
+                        .font(.footnote)
+                        .foregroundStyle(.white.opacity(0.72))
+                }
+                Spacer()
+            }
+            .foregroundStyle(.white)
+
+            if let attempt = pendingKickAttempt {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 14) {
+                        ForEach(players(forTeamID: attempt.teamID)) { player in
+                            kickPlayerButton(player)
+                        }
+                        noPlayerKickButton
+                    }
+                    .padding(.vertical, 2)
+                }
+            }
+
+            resultButtons(
+                isEnabled: pendingKickAttempt?.hasSelectedPlayer == true,
+                successAction: { recordPendingKick(outcome: "success") },
+                failureAction: { recordPendingKick(outcome: "fail") }
+            )
+        }
+        .padding(16)
+        .background(.ultraThinMaterial)
+        .clipShape(RoundedRectangle(cornerRadius: 18))
+        .overlay(
+            RoundedRectangle(cornerRadius: 18)
+                .stroke(Color.white.opacity(0.12), lineWidth: 1)
+        )
+        .shadow(radius: 16)
+    }
+
+    private func resultButtons(
+        isEnabled: Bool = true,
+        successAction: @escaping () -> Void,
+        failureAction: @escaping () -> Void
+    ) -> some View {
+        HStack(spacing: 16) {
+            Button {
+                successAction()
+            } label: {
+                Text("成功")
+                    .font(.title2.weight(.bold))
+                    .foregroundStyle(.white)
+                    .frame(maxWidth: .infinity, minHeight: 66)
+                    .background(Color.green)
+                    .clipShape(RoundedRectangle(cornerRadius: 8))
+            }
+            .buttonStyle(.plain)
+            .disabled(!isEnabled)
+            .opacity(isEnabled ? 1 : 0.45)
+
+            Button {
+                failureAction()
+            } label: {
+                Text("失敗")
+                    .font(.title2.weight(.bold))
+                    .foregroundStyle(.white)
+                    .frame(maxWidth: .infinity, minHeight: 66)
+                    .background(Color.red)
+                    .clipShape(RoundedRectangle(cornerRadius: 8))
+            }
+            .buttonStyle(.plain)
+            .disabled(!isEnabled)
+            .opacity(isEnabled ? 1 : 0.45)
+        }
+    }
+
+    private func kickPlayerButton(_ player: Player) -> some View {
+        let isSelected = pendingKickAttempt?.playerID == player.id && pendingKickAttempt?.hasSelectedPlayer == true
+
+        return Button {
+            pendingKickAttempt?.playerID = player.id
+            pendingKickAttempt?.hasSelectedPlayer = true
+        } label: {
+            VStack(spacing: 6) {
+                playerAvatar(player: player, isSelected: isSelected)
+                Text("#\(player.number)")
+                    .font(.caption.weight(.bold).monospacedDigit())
+                Text(player.name ?? "名前未設定")
+                    .font(.caption2)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.6)
+                    .frame(width: 74)
+            }
+            .foregroundStyle(.white)
+        }
+        .buttonStyle(.plain)
+    }
+
+    private var noPlayerKickButton: some View {
+        let isSelected = pendingKickAttempt?.playerID == nil && pendingKickAttempt?.hasSelectedPlayer == true
+
+        return Button {
+            pendingKickAttempt?.playerID = nil
+            pendingKickAttempt?.hasSelectedPlayer = true
+        } label: {
+            VStack(spacing: 6) {
+                ZStack(alignment: .topTrailing) {
+                    Circle()
+                        .stroke(Color.white.opacity(isSelected ? 0.95 : 0.28), lineWidth: isSelected ? 3 : 1)
+                        .frame(width: 68, height: 68)
+                    Image(systemName: "person.crop.circle.badge.plus")
+                        .font(.title)
+                        .foregroundStyle(.white.opacity(0.7))
+                        .frame(width: 68, height: 68)
+                }
+                Text("その他")
+                    .font(.caption.weight(.bold))
+                Text("選手なし")
+                    .font(.caption2)
+                    .foregroundStyle(.white.opacity(0.68))
+            }
+            .foregroundStyle(.white)
+        }
+        .buttonStyle(.plain)
+    }
+
+    @ViewBuilder
+    private func playerAvatar(player: Player, isSelected: Bool) -> some View {
+        ZStack(alignment: .topTrailing) {
+            if let imagePath = player.imagePath, let uiImage = ImageStorage.image(named: imagePath) {
+                Image(uiImage: uiImage)
+                    .resizable()
+                    .scaledToFill()
+                    .frame(width: 68, height: 68)
+                    .clipShape(Circle())
+            } else {
+                Circle()
+                    .fill(Color.white.opacity(0.12))
+                    .frame(width: 68, height: 68)
+                    .overlay(
+                        Image(systemName: "person.fill")
+                            .font(.title)
+                            .foregroundStyle(.white.opacity(0.7))
+                    )
+            }
+
+            Circle()
+                .stroke(isSelected ? homeAccent : Color.white.opacity(0.3), lineWidth: isSelected ? 4 : 1)
+                .frame(width: 68, height: 68)
+
+            if isSelected {
+                Image(systemName: "checkmark.circle.fill")
+                    .font(.title3)
+                    .foregroundStyle(homeAccent)
+                    .background(Circle().fill(.white))
+                    .offset(x: 4, y: -4)
+            }
+        }
+    }
+
+    // MARK: - Input target switching
+
+    private func switchInputTeamIfNeeded(width: CGFloat, height: CGFloat) {
+        guard abs(width) > 64, abs(width) > abs(height) * 1.4 else { return }
+
+        withAnimation(.easeInOut(duration: 0.16)) {
+            selectedInputTeamID = width < 0 ? match.awayTeamID : match.homeTeamID
         }
     }
 
     // MARK: - Half change
 
     private func switchToSecondHalf() {
-        // 走行中の BIP/Team1/Team2 を既存の処理で停止し、最後の区間を保存して締める。
-        // Time を停止して 0:00 にリセットし、後半表示へ。
-        // BIP/Team1/Team2 の累積秒は意図的にリセットしない（試合通算のポゼッション計測のため）。
         let now = Date()
         stopBIPAndTeams(at: now)
         if timeState.isRunning {
@@ -169,8 +768,6 @@ struct V3RecordingView: View {
     // MARK: - Finish match
 
     private func finishMatch() {
-        // タイマー走行中なら既存の toggleTime() で停止し、最後の区間を保存して締める。
-        // ステートマシンは変更せず、既存処理を利用するだけ。
         if timeState.isRunning {
             toggleTime()
         }
@@ -189,326 +786,7 @@ struct V3RecordingView: View {
         dismiss()
     }
 
-    // MARK: - Header band (Time / Score / Half)
-
-    private var headerBand: some View {
-        HStack(spacing: 12) {
-            Spacer()
-
-            // 左: 前後半トグル（Time の左へ移動）
-            Button(isSecondHalf ? "後半" : "前半") {
-                if !isSecondHalf {
-                    isShowingHalfChangeConfirmation = true
-                }
-            }
-            .buttonStyle(.bordered)
-            .controlSize(.small)
-            .disabled(isSecondHalf)
-
-            // 中央: ラベル "Time" の下に 00:00 を縦積み（BIP/チームと同じ並び方）
-            VStack(spacing: 2) {
-                Text("Time")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-
-                TimelineView(.periodic(from: .now, by: 1)) { context in
-                    Text(timeState.elapsedText(at: context.date))
-                        .font(.system(size: 26, weight: .bold, design: .monospaced))
-                }
-            }
-
-            // 右: 開始/停止ボタン
-            Button(timeState.isRunning ? "停止" : "開始") {
-                toggleTime()
-            }
-            .buttonStyle(.borderedProminent)
-
-            Spacer()
-        }
-        .padding(.vertical, 8)
-        .padding(.horizontal, 10)
-        .background(Color.secondary.opacity(0.08))
-        .clipShape(RoundedRectangle(cornerRadius: 8))
-    }
-
-    // MARK: - Possession band (Team1 / BIP / Team2)
-
-    private var possessionBand: some View {
-        HStack(alignment: .top, spacing: 8) {
-            teamColumn(
-                teamID: match.homeTeamID,
-                state: team1State,
-                buttonTitle: team1State.isRunning ? "停止" : "開始",
-                action: toggleTeam1
-            )
-
-            bipColumn
-
-            teamColumn(
-                teamID: match.awayTeamID,
-                state: team2State,
-                buttonTitle: team2State.isRunning ? "停止" : "開始",
-                action: toggleTeam2
-            )
-        }
-    }
-
-    private func teamColumn(
-        teamID: UUID,
-        state: V3TimerState,
-        buttonTitle: String,
-        action: @escaping () -> Void
-    ) -> some View {
-        VStack(spacing: 8) {
-            teamLogoBox(for: teamID)
-
-            teamTimerPanel(
-                title: teamName(for: teamID),
-                state: state,
-                buttonTitle: buttonTitle,
-                action: action
-            )
-        }
-    }
-
-    private var bipColumn: some View {
-        VStack(spacing: 8) {
-            scoreDisplay
-            bipTimerPanel
-        }
-    }
-
-    // 上段の3ボックス（ロゴ/スコア/ロゴ）は同じ正方形サイズで揃える。
-    // スコア表示は内容が小さいので中央寄せして余白を持たせる。
-    private var scoreDisplay: some View {
-        VStack(spacing: 4) {
-            Spacer(minLength: 0)
-
-            Text("\(score(for: match.homeTeamID)) - \(score(for: match.awayTeamID))")
-                .font(.system(size: 26, weight: .bold, design: .monospaced))
-
-            VStack(spacing: 2) {
-                halfScoreLabel("1ST", half: 0)
-                halfScoreLabel("2ND", half: 1)
-            }
-            .font(.caption2.monospacedDigit())
-            .foregroundStyle(.secondary)
-
-            Spacer(minLength: 0)
-        }
-        .frame(maxWidth: .infinity)
-        .aspectRatio(1, contentMode: .fit)
-    }
-
-    private func halfScoreLabel(_ label: String, half: Int) -> some View {
-        Text("\(label) \(score(for: match.homeTeamID, half: half))-\(score(for: match.awayTeamID, half: half))")
-    }
-
-    private var bipTimerPanel: some View {
-        VStack(spacing: 6) {
-            Text("BIP")
-                .font(.subheadline.weight(.semibold))
-                .lineLimit(1)
-                .minimumScaleFactor(0.7)
-
-            TimelineView(.periodic(from: .now, by: 1)) { context in
-                Text(bipState.elapsedText(at: context.date))
-                    .font(.system(size: 24, weight: .bold, design: .monospaced))
-                    .frame(maxWidth: .infinity)
-            }
-
-            Button {
-                toggleBIP()
-            } label: {
-                Text(bipState.isRunning ? "停止" : "開始")
-                    .font(.subheadline.weight(.semibold))
-                    .frame(maxWidth: .infinity, minHeight: 38)
-            }
-            .buttonStyle(.bordered)
-            .disabled(!timeState.isRunning)
-        }
-        .frame(maxWidth: .infinity)
-        .padding(8)
-        .background(bipState.isRunning ? Color.orange.opacity(0.15) : Color.secondary.opacity(0.08))
-        .clipShape(RoundedRectangle(cornerRadius: 8))
-    }
-
-    // MARK: - Input target picker
-
-    private var inputTeamPicker: some View {
-        Picker("入力対象", selection: inputTeamSelection) {
-            Text(teamName(for: match.homeTeamID)).tag(match.homeTeamID)
-            Text(teamName(for: match.awayTeamID)).tag(match.awayTeamID)
-        }
-        .pickerStyle(.segmented)
-    }
-
-    // MARK: - Scoring row (1×4)
-
-    private var scoringRow: some View {
-        HStack(spacing: 8) {
-            scoringButton(.tryScore)
-            scoringButton(.conversion)
-            scoringButton(.penaltyGoal)
-            scoringButton(.dropGoal)
-        }
-    }
-
-    // MARK: - Set piece compact (1 row per type)
-
-    private var setPieceCompact: some View {
-        VStack(spacing: 8) {
-            V3SetPieceControl(
-                title: "ラインアウト",
-                category: "lineout",
-                events: setPieceEvents,
-                selectedTeamID: selectedInputTeam,
-                onRecord: recordSetPiece
-            )
-
-            V3SetPieceControl(
-                title: "スクラム",
-                category: "scrum",
-                events: setPieceEvents,
-                selectedTeamID: selectedInputTeam,
-                onRecord: recordSetPiece
-            )
-        }
-    }
-
-    // MARK: - Undo band
-
-    private var undoBand: some View {
-        Button {
-            undoLastEvent()
-        } label: {
-            Text("取り消し")
-                .font(.subheadline.weight(.semibold))
-                .frame(maxWidth: .infinity, minHeight: 40)
-        }
-        .buttonStyle(.bordered)
-        .tint(.red)
-        .disabled(undoableLastEvent == nil)
-    }
-
-    // MARK: - Subviews
-
-    private var kickResultPanel: some View {
-        VStack(spacing: 14) {
-            Text(pendingKickAttempt?.category.displayName ?? "キック")
-                .font(.headline)
-            HStack(spacing: 8) {
-                Button {
-                    recordPendingKick(outcome: "success")
-                } label: {
-                    Text("成功")
-                        .font(.title.weight(.bold))
-                        .foregroundStyle(.green)
-                        .frame(maxWidth: .infinity, minHeight: 86)
-                        .background(Color.green.opacity(0.28))
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 2)
-                                .stroke(Color.green, lineWidth: 2)
-                        )
-                }
-                .buttonStyle(.plain)
-
-                Button {
-                    recordPendingKick(outcome: "fail")
-                } label: {
-                    Text("失敗")
-                        .font(.title.weight(.bold))
-                        .foregroundStyle(.red)
-                        .frame(maxWidth: .infinity, minHeight: 86)
-                        .background(Color.red.opacity(0.22))
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 2)
-                                .stroke(Color.red, lineWidth: 2)
-                        )
-                }
-                .buttonStyle(.plain)
-            }
-        }
-        .padding(16)
-        .frame(maxWidth: 360)
-        .background(.regularMaterial)
-        .clipShape(RoundedRectangle(cornerRadius: 8))
-        .shadow(radius: 12)
-        .padding(.horizontal, 24)
-    }
-
-    private func scoringButton(_ category: ScoringCategory) -> some View {
-        Button {
-            recordScore(category)
-        } label: {
-            VStack(spacing: 2) {
-                Text(category.displayName)
-                    .font(.subheadline.weight(.semibold))
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.6)
-                Text("\(countEvents(category: category.rawValue))")
-                    .font(.title3.monospacedDigit())
-            }
-            .frame(maxWidth: .infinity, minHeight: 60)
-        }
-        .buttonStyle(.borderedProminent)
-    }
-
-    private func teamTimerPanel(
-        title: String,
-        state: V3TimerState,
-        buttonTitle: String,
-        action: @escaping () -> Void
-    ) -> some View {
-        VStack(spacing: 6) {
-            Text(title)
-                .font(.subheadline.weight(.semibold))
-                .lineLimit(1)
-                .minimumScaleFactor(0.7)
-
-            TimelineView(.periodic(from: .now, by: 1)) { context in
-                Text(state.elapsedText(at: context.date))
-                    .font(.system(size: 24, weight: .bold, design: .monospaced))
-                    .frame(maxWidth: .infinity)
-            }
-
-            Button {
-                action()
-            } label: {
-                Text(buttonTitle)
-                    .font(.subheadline.weight(.semibold))
-                    .frame(maxWidth: .infinity, minHeight: 38)
-            }
-            .buttonStyle(.borderedProminent)
-        }
-        .frame(maxWidth: .infinity)
-        .padding(8)
-        .background(state.isRunning ? Color.blue.opacity(0.12) : Color.secondary.opacity(0.08))
-        .clipShape(RoundedRectangle(cornerRadius: 8))
-    }
-
-    @ViewBuilder
-    private func teamLogoBox(for teamID: UUID) -> some View {
-        let team = teams.first { $0.id == teamID }
-        Group {
-            if let team, let logoName = team.logoPath, let uiImage = ImageStorage.image(named: logoName) {
-                Image(uiImage: uiImage)
-                    .resizable()
-                    .scaledToFill()
-            } else {
-                Image(systemName: "shield.fill")
-                    .resizable()
-                    .scaledToFit()
-                    .foregroundStyle(.secondary)
-                    .padding(8)
-            }
-        }
-        .frame(maxWidth: .infinity)
-        .aspectRatio(1, contentMode: .fit)
-        .clipShape(RoundedRectangle(cornerRadius: 6))
-    }
-
-    // MARK: - Timer toggling (unchanged from previous V3 behavior)
+    // MARK: - Timer toggling
 
     private func toggleTime() {
         let now = Date()
@@ -602,6 +880,8 @@ struct V3RecordingView: View {
     }
 
     private func recordScore(_ category: ScoringCategory) {
+        pendingSetPieceAttempt = nil
+
         if category.requiresResultSelection {
             pendingKickAttempt = PendingKickAttempt(
                 category: category,
@@ -609,7 +889,6 @@ struct V3RecordingView: View {
                 seconds: timeState.elapsedSeconds(at: Date()),
                 half: currentHalf
             )
-            isShowingKickPlayerSelection = true
             return
         }
 
@@ -617,7 +896,7 @@ struct V3RecordingView: View {
     }
 
     private func recordPendingKick(outcome: String) {
-        guard let attempt = pendingKickAttempt else { return }
+        guard let attempt = pendingKickAttempt, attempt.hasSelectedPlayer else { return }
         pendingKickAttempt = nil
         saveScoreEvent(
             category: attempt.category,
@@ -627,6 +906,18 @@ struct V3RecordingView: View {
             seconds: attempt.seconds,
             half: attempt.half,
             opensPlayerSheet: false
+        )
+    }
+
+    private func recordPendingSetPiece(outcome: String) {
+        guard let attempt = pendingSetPieceAttempt else { return }
+        pendingSetPieceAttempt = nil
+        saveSetPieceEvent(
+            category: attempt.category,
+            outcome: outcome,
+            teamID: attempt.teamID,
+            seconds: attempt.seconds,
+            half: attempt.half
         )
     }
 
@@ -660,14 +951,20 @@ struct V3RecordingView: View {
         scoreEvents.filter { $0.category == category && $0.teamID == selectedInputTeam }.count
     }
 
-    private func recordSetPiece(category: String, outcome: String) {
+    private func saveSetPieceEvent(
+        category: String,
+        outcome: String,
+        teamID: UUID,
+        seconds: Int,
+        half: Int
+    ) {
         let event = StatEvent(
             matchID: match.id,
-            teamID: selectedInputTeam,
+            teamID: teamID,
             category: category,
             outcome: outcome,
-            seconds: timeState.elapsedSeconds(at: Date()),
-            half: currentHalf
+            seconds: seconds,
+            half: half
         )
         modelContext.insert(event)
         try? modelContext.save()
@@ -721,55 +1018,32 @@ struct V3RecordingView: View {
         }
     }
 
+    private func halfScoreLabel(_ label: String, half: Int) -> some View {
+        Text("\(label) \(score(for: match.homeTeamID, half: half))-\(score(for: match.awayTeamID, half: half))")
+    }
+
     private func teamName(for id: UUID) -> String {
         teams.first { $0.id == id }?.name ?? "チーム未設定"
     }
-}
 
-private struct V3SetPieceControl: View {
-    let title: String
-    let category: String
-    let events: [StatEvent]
-    let selectedTeamID: UUID
-    let onRecord: (String, String) -> Void
-
-    private var selectedEvents: [StatEvent] {
-        events.filter { $0.category == category && $0.teamID == selectedTeamID }
-    }
-
-    private var successfulCount: Int {
-        selectedEvents.filter { $0.outcome == "success" }.count
-    }
-
-    private var totalCount: Int {
-        selectedEvents.count
-    }
-
-    var body: some View {
-        HStack(spacing: 8) {
-            Text(title)
-                .font(.subheadline.weight(.semibold))
-                .lineLimit(1)
-                .minimumScaleFactor(0.7)
-                .frame(width: 96, alignment: .leading)
-
-            Button("成功") {
-                onRecord(category, "success")
+    @ViewBuilder
+    private func teamLogoBox(for teamID: UUID) -> some View {
+        let team = teams.first { $0.id == teamID }
+        Group {
+            if let team, let logoName = team.logoPath, let uiImage = ImageStorage.image(named: logoName) {
+                Image(uiImage: uiImage)
+                    .resizable()
+                    .scaledToFill()
+            } else {
+                Image(systemName: "shield.fill")
+                    .resizable()
+                    .scaledToFit()
+                    .foregroundStyle(.white.opacity(0.65))
+                    .padding(12)
             }
-            .frame(maxWidth: .infinity, minHeight: 40)
-            .buttonStyle(.borderedProminent)
-
-            Button("失敗") {
-                onRecord(category, "fail")
-            }
-            .frame(maxWidth: .infinity, minHeight: 40)
-            .buttonStyle(.bordered)
-
-            Text("\(successfulCount)/\(totalCount)")
-                .font(.footnote.monospacedDigit())
-                .foregroundStyle(.secondary)
-                .frame(width: 40, alignment: .trailing)
         }
+        .background(Color.white)
+        .clipShape(RoundedRectangle(cornerRadius: 8))
     }
 }
 
@@ -780,6 +1054,15 @@ private struct PendingKickAttempt {
     let half: Int
     var playerID: UUID?
     var hasSelectedPlayer = false
+}
+
+private struct PendingSetPieceAttempt {
+    let title: String
+    let category: String
+    let symbol: String
+    let teamID: UUID
+    let seconds: Int
+    let half: Int
 }
 
 private struct V3TimerState {
@@ -826,6 +1109,18 @@ private struct V3TimerState {
             return accumulatedSeconds
         }
         return accumulatedSeconds + max(0, Int(date.timeIntervalSince(startedAt)))
+    }
+}
+
+private extension View {
+    func recordingCardBackground() -> some View {
+        self
+            .background(Color(red: 0.04, green: 0.12, blue: 0.18).opacity(0.96))
+            .clipShape(RoundedRectangle(cornerRadius: 10))
+            .overlay(
+                RoundedRectangle(cornerRadius: 10)
+                    .stroke(Color.white.opacity(0.10), lineWidth: 1)
+            )
     }
 }
 
