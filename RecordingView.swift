@@ -278,7 +278,16 @@ struct RecordingView: View {
             guard let currentPossession else {
                 return "保持チームをタップした時点から記録します。"
             }
-            return "現在: \(currentPossession.displayName)"
+            return "現在: \(possessionTeamName(for: currentPossession))"
+        }
+    }
+
+    private func possessionTeamName(for side: PossessionSide) -> String {
+        switch side {
+        case .own:
+            return teamName(for: selectedRecordingTeam)
+        case .opponent:
+            return teamName(for: opponentTeamID)
         }
     }
 
@@ -511,15 +520,6 @@ private enum TimeControlState {
 private enum PossessionSide: String {
     case own
     case opponent
-
-    var displayName: String {
-        switch self {
-        case .own:
-            return "自チーム"
-        case .opponent:
-            return "相手"
-        }
-    }
 }
 
 enum ScoringCategory: String {
