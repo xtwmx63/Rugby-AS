@@ -13,6 +13,9 @@ struct TeamListView: View {
     @Environment(\.modelContext) private var modelContext
     @Query(sort: \Team.name) private var teams: [Team]
 
+    @State private var teamPendingDeletion: Team?
+    @State private var deletionBlockedTeam: Team?
+
     var body: some View {
         List {
             if teams.isEmpty {
@@ -31,6 +34,11 @@ struct TeamListView: View {
                             Text(team.name)
                         }
                     }
+                    .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                        Button("削除", role: .destructive) {
+                            requestDeletion(of: team)
+                        }
+                    }
                 }
             }
         }
@@ -45,6 +53,82 @@ struct TeamListView: View {
                 .accessibilityLabel("チームを追加")
             }
         }
+        .confirmationDialog(
+            "このチームを削除しますか？",
+            isPresented: Binding(
+                get: { teamPendingDeletion != nil },
+                set: { if !$0 { teamPendingDeletion = nil } }
+            ),
+            presenting: teamPendingDeletion,
+            actions: { team in
+                Button("削除する", role: .destructive) {
+                    deleteTeam(team)
+                    teamPendingDeletion = nil
+                }
+                Button("キャンセル", role: .cancel) {
+                    teamPendingDeletion = nil
+                }
+            },
+            message: { team in
+                Text("チーム「\(team.name)」と、所属する選手・写真をまとめて削除します。")
+            }
+        )
+        .alert(
+            "削除できません",
+            isPresented: Binding(
+                get: { deletionBlockedTeam != nil },
+                set: { if !$0 { deletionBlockedTeam = nil } }
+            ),
+            presenting: deletionBlockedTeam,
+            actions: { _ in
+                Button("OK", role: .cancel) {
+                    deletionBlockedTeam = nil
+                }
+            },
+            message: { team in
+                Text("「\(team.name)」は試合で使われているため削除できません。先に該当する試合を削除してください。")
+            }
+        )
+    }
+
+    private func requestDeletion(of team: Team) {
+        if isTeamUsedInAnyMatch(team) {
+            deletionBlockedTeam = team
+        } else {
+            teamPendingDeletion = team
+        }
+    }
+
+    private func isTeamUsedInAnyMatch(_ team: Team) -> Bool {
+        let teamID = team.id
+        let descriptor = FetchDescriptor<Match>(
+            predicate: #Predicate { match in
+                match.homeTeamID == teamID || match.awayTeamID == teamID
+            }
+        )
+        return ((try? modelContext.fetch(descriptor).first) != nil)
+    }
+
+    private func deleteTeam(_ team: Team) {
+        // ロゴ画像を消す（端末内ファイル）
+        if let logoName = team.logoPath {
+            ImageStorage.delete(named: logoName)
+        }
+        // 所属選手と各選手の写真を消す
+        let teamID = team.id
+        let playerDescriptor = FetchDescriptor<Player>(
+            predicate: #Predicate { player in player.teamID == teamID }
+        )
+        if let players = try? modelContext.fetch(playerDescriptor) {
+            for player in players {
+                if let photoName = player.imagePath {
+                    ImageStorage.delete(named: photoName)
+                }
+                modelContext.delete(player)
+            }
+        }
+        modelContext.delete(team)
+        try? modelContext.save()
     }
 
     private func addTeam() {
