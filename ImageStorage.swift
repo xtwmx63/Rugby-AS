@@ -14,6 +14,14 @@ enum ImageStorage {
         URL.documentsDirectory
     }
 
+    // body が再描画されるたびにディスクから読み直すと体感ラグが出るので、
+    // 画像はファイル名をキーにメモリキャッシュしておく。
+    private static let cache: NSCache<NSString, UIImage> = {
+        let cache = NSCache<NSString, UIImage>()
+        cache.countLimit = 128
+        return cache
+    }()
+
     /// データをリサイズ（長辺 1024px）+ JPEG quality 0.8 で保存し、ファイル名を返す。失敗時 nil。
     static func save(_ data: Data) -> String? {
         guard let image = UIImage(data: data) else { return nil }
@@ -23,6 +31,7 @@ enum ImageStorage {
         let url = directory.appendingPathComponent(name)
         do {
             try jpegData.write(to: url)
+            cache.setObject(resized, forKey: name as NSString)
             return name
         } catch {
             return nil
@@ -30,14 +39,22 @@ enum ImageStorage {
     }
 
     static func image(named name: String) -> UIImage? {
+        let key = name as NSString
+        if let cached = cache.object(forKey: key) {
+            return cached
+        }
         let url = directory.appendingPathComponent(name)
-        guard let data = try? Data(contentsOf: url) else { return nil }
-        return UIImage(data: data)
+        guard let data = try? Data(contentsOf: url), let image = UIImage(data: data) else {
+            return nil
+        }
+        cache.setObject(image, forKey: key)
+        return image
     }
 
     static func delete(named name: String) {
         let url = directory.appendingPathComponent(name)
         try? FileManager.default.removeItem(at: url)
+        cache.removeObject(forKey: name as NSString)
     }
 
     /// 長辺を maxDimension に収めるリサイズ。既に小さいときは原画を返す。
