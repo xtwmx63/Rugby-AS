@@ -18,6 +18,8 @@ struct V3RecordingView: View {
     // body 内で毎回 allEvents を filter するのは重いので、Query 段階で
     // 当該 match のイベントだけに絞る。
     @Query private var matchEvents: [StatEvent]
+    // 試合前に登録したスタメン/リザーブ。選手選択時の並び順だけに使う。
+    @Query private var matchLineupEntries: [MatchLineup]
 
     let match: Match
 
@@ -28,6 +30,9 @@ struct V3RecordingView: View {
         let awayID = match.awayTeamID
         _matchEvents = Query(filter: #Predicate<StatEvent> { event in
             event.matchID == matchID
+        })
+        _matchLineupEntries = Query(filter: #Predicate<MatchLineup> { entry in
+            entry.matchID == matchID
         })
         _allPlayers = Query(
             filter: #Predicate<Player> { player in
@@ -1001,9 +1006,36 @@ struct V3RecordingView: View {
     }
 
     private func players(forTeamID teamID: UUID) -> [Player] {
-        allPlayers
+        // スタメン登録の並び順を尊重しつつ、登録外の選手は番号順で末尾に。
+        // 絞り込みは行わない（登録外も選択肢として残す）。
+        let teamLineup = matchLineupEntries.filter { $0.teamID == teamID }
+        let orderByPlayer = Dictionary(
+            teamLineup.map { ($0.playerID, $0.order) },
+            uniquingKeysWith: { first, _ in first }
+        )
+        let roleByPlayer = Dictionary(
+            teamLineup.map { ($0.playerID, $0.role) },
+            uniquingKeysWith: { first, _ in first }
+        )
+        return allPlayers
             .filter { $0.teamID == teamID }
-            .sorted { $0.number < $1.number }
+            .sorted { lhs, rhs in
+                let lRank = lineupRoleRank(roleByPlayer[lhs.id])
+                let rRank = lineupRoleRank(roleByPlayer[rhs.id])
+                if lRank != rRank { return lRank < rRank }
+                if let lOrder = orderByPlayer[lhs.id], let rOrder = orderByPlayer[rhs.id] {
+                    return lOrder < rOrder
+                }
+                return lhs.number < rhs.number
+            }
+    }
+
+    private func lineupRoleRank(_ role: String?) -> Int {
+        switch role {
+        case "starter": return 0
+        case "reserve": return 1
+        default: return 2
+        }
     }
 
     private func playerSelectionTitle(for event: StatEvent) -> String {
@@ -1315,6 +1347,7 @@ private extension View {
         Tournament.self,
         Match.self,
         StatEvent.self,
+        MatchLineup.self,
         Substitution.self
     ], inMemory: true)
 }
