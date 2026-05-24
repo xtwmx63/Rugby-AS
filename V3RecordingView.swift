@@ -12,10 +12,30 @@ struct V3RecordingView: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(\.dismiss) private var dismiss
     @Query private var teams: [Team]
-    @Query(sort: \Player.number) private var allPlayers: [Player]
-    @Query private var allEvents: [StatEvent]
+    // 全選手を取って main thread でソートするのは初回 push 時に体感ラグを生むので、
+    // 当該試合に出てくる 2 チームの選手だけに絞る。
+    @Query private var allPlayers: [Player]
+    // body 内で毎回 allEvents を filter するのは重いので、Query 段階で
+    // 当該 match のイベントだけに絞る。
+    @Query private var matchEvents: [StatEvent]
 
     let match: Match
+
+    init(match: Match) {
+        self.match = match
+        let matchID = match.id
+        let homeID = match.homeTeamID
+        let awayID = match.awayTeamID
+        _matchEvents = Query(filter: #Predicate<StatEvent> { event in
+            event.matchID == matchID
+        })
+        _allPlayers = Query(
+            filter: #Predicate<Player> { player in
+                player.teamID == homeID || player.teamID == awayID
+            },
+            sort: [SortDescriptor(\Player.number)]
+        )
+    }
 
     @State private var timeState = V3TimerState()
     @State private var bipState = V3TimerState()
@@ -23,6 +43,7 @@ struct V3RecordingView: View {
     @State private var team2State = V3TimerState()
     @State private var selectedInputTeamID: UUID?
     @State private var scoringEventForPlayerSelection: StatEvent?
+    @State private var pendingScorerAttempt: PendingScorerAttempt?
     @State private var pendingKickAttempt: PendingKickAttempt?
     @State private var pendingSetPieceAttempt: PendingSetPieceAttempt?
     @State private var isSecondHalf = false
@@ -33,15 +54,15 @@ struct V3RecordingView: View {
     private let awayAccent = Color.red
     private let fieldBackground = Color(red: 0.02, green: 0.06, blue: 0.10)
     private let cardBackground = Color(red: 0.04, green: 0.12, blue: 0.18)
+    // 「コンバージョン」など長い文字でも縮まないよう、6 種のラベルと回数表示は
+    // 固定サイズで揃える。1 行に収まる範囲で十分大きいサイズを選定。
+    private let actionLabelFont: Font = .system(size: 14, weight: .bold)
+    private let actionCountFont: Font = .system(size: 22, weight: .bold).monospacedDigit()
 
     private var selectedTeamPlayers: [Player] {
         allPlayers
             .filter { $0.teamID == selectedInputTeam }
             .sorted { $0.number < $1.number }
-    }
-
-    private var matchEvents: [StatEvent] {
-        allEvents.filter { $0.matchID == match.id }
     }
 
     private var scoreEvents: [StatEvent] {
@@ -68,7 +89,7 @@ struct V3RecordingView: View {
     }
 
     private var bottomPanelIsPresented: Bool {
-        pendingKickAttempt != nil || pendingSetPieceAttempt != nil
+        pendingScorerAttempt != nil || pendingKickAttempt != nil || pendingSetPieceAttempt != nil
     }
 
     private var inputTeamSwipeGesture: some Gesture {
@@ -84,8 +105,8 @@ struct V3RecordingView: View {
 
             VStack(spacing: 6) {
                 topBar
-                clockCard
                 scoreCard
+                clockCard
                 possessionDashboard
                 inputTargetCard
                 actionGrid
@@ -98,6 +119,9 @@ struct V3RecordingView: View {
 
             if pendingKickAttempt != nil {
                 kickEntryPanel
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+            } else if pendingScorerAttempt != nil {
+                scorerEntryPanel
                     .transition(.move(edge: .bottom).combined(with: .opacity))
             } else if pendingSetPieceAttempt != nil {
                 setPieceResultPanel
@@ -441,18 +465,16 @@ struct V3RecordingView: View {
                         .font(.title3.weight(.bold))
                         .frame(width: 26)
                     Text(category.displayName)
-                        .font(.subheadline.weight(.bold))
+                        .font(actionLabelFont)
                         .lineLimit(1)
-                        .minimumScaleFactor(0.42)
                     Spacer(minLength: 0)
                 }
 
                 HStack {
                     Spacer()
                     Text("\(countEvents(category: category.rawValue))")
-                        .font(.title2.weight(.bold).monospacedDigit())
+                        .font(actionCountFont)
                         .lineLimit(1)
-                        .minimumScaleFactor(0.7)
                 }
             }
             .foregroundStyle(.white)
@@ -476,6 +498,7 @@ struct V3RecordingView: View {
         let totalCount = events.count
 
         return Button {
+            pendingScorerAttempt = nil
             pendingKickAttempt = nil
             pendingSetPieceAttempt = PendingSetPieceAttempt(
                 title: title,
@@ -493,18 +516,16 @@ struct V3RecordingView: View {
                         .frame(width: 26)
 
                     Text(title)
-                        .font(.subheadline.weight(.bold))
+                        .font(actionLabelFont)
                         .lineLimit(1)
-                        .minimumScaleFactor(0.42)
                     Spacer(minLength: 0)
                 }
 
                 HStack {
                     Spacer()
                     Text("\(successCount)/\(totalCount)")
-                        .font(.title2.weight(.bold).monospacedDigit())
+                        .font(actionCountFont)
                         .lineLimit(1)
-                        .minimumScaleFactor(0.7)
                 }
             }
             .foregroundStyle(.white)
@@ -563,6 +584,51 @@ struct V3RecordingView: View {
                 successAction: { recordPendingSetPiece(outcome: "success") },
                 failureAction: { recordPendingSetPiece(outcome: "fail") }
             )
+        }
+        .padding(16)
+        .background(.ultraThinMaterial)
+        .clipShape(RoundedRectangle(cornerRadius: 18))
+        .overlay(
+            RoundedRectangle(cornerRadius: 18)
+                .stroke(Color.white.opacity(0.12), lineWidth: 1)
+        )
+        .shadow(radius: 16)
+    }
+
+    private var scorerEntryPanel: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Capsule()
+                .fill(Color.white.opacity(0.28))
+                .frame(width: 74, height: 5)
+                .frame(maxWidth: .infinity)
+
+            HStack(spacing: 10) {
+                Image(systemName: "figure.rugby")
+                    .font(.title3.weight(.bold))
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(pendingScorerAttempt?.category.displayName ?? "トライ")
+                        .font(.title3.weight(.bold))
+                    Text("得点者を選択してください")
+                        .font(.footnote)
+                        .foregroundStyle(.white.opacity(0.72))
+                }
+                Spacer()
+            }
+            .foregroundStyle(.white)
+
+            if let attempt = pendingScorerAttempt {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 14) {
+                        ForEach(players(forTeamID: attempt.teamID)) { player in
+                            scorerPlayerButton(player)
+                        }
+                        noPlayerScorerButton
+                    }
+                    .padding(.vertical, 2)
+                }
+            }
+
+            confirmScorerButton(isEnabled: pendingScorerAttempt?.hasSelectedPlayer == true)
         }
         .padding(16)
         .background(.ultraThinMaterial)
@@ -657,6 +723,72 @@ struct V3RecordingView: View {
             .disabled(!isEnabled)
             .opacity(isEnabled ? 1 : 0.45)
         }
+    }
+
+    private func confirmScorerButton(isEnabled: Bool) -> some View {
+        Button {
+            recordPendingScorer()
+        } label: {
+            Text("確定")
+                .font(.title2.weight(.bold))
+                .foregroundStyle(.white)
+                .frame(maxWidth: .infinity, minHeight: 66)
+                .background(Color.green)
+                .clipShape(RoundedRectangle(cornerRadius: 8))
+        }
+        .buttonStyle(.plain)
+        .disabled(!isEnabled)
+        .opacity(isEnabled ? 1 : 0.45)
+    }
+
+    private func scorerPlayerButton(_ player: Player) -> some View {
+        let isSelected = pendingScorerAttempt?.playerID == player.id && pendingScorerAttempt?.hasSelectedPlayer == true
+
+        return Button {
+            pendingScorerAttempt?.playerID = player.id
+            pendingScorerAttempt?.hasSelectedPlayer = true
+        } label: {
+            VStack(spacing: 6) {
+                playerAvatar(player: player, isSelected: isSelected)
+                Text("#\(player.number)")
+                    .font(.caption.weight(.bold).monospacedDigit())
+                Text(player.name ?? "名前未設定")
+                    .font(.caption2)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.6)
+                    .frame(width: 74)
+            }
+            .foregroundStyle(.white)
+        }
+        .buttonStyle(.plain)
+    }
+
+    private var noPlayerScorerButton: some View {
+        let isSelected = pendingScorerAttempt?.playerID == nil && pendingScorerAttempt?.hasSelectedPlayer == true
+
+        return Button {
+            pendingScorerAttempt?.playerID = nil
+            pendingScorerAttempt?.hasSelectedPlayer = true
+        } label: {
+            VStack(spacing: 6) {
+                ZStack(alignment: .topTrailing) {
+                    Circle()
+                        .stroke(Color.white.opacity(isSelected ? 0.95 : 0.28), lineWidth: isSelected ? 3 : 1)
+                        .frame(width: 68, height: 68)
+                    Image(systemName: "person.crop.circle.badge.plus")
+                        .font(.title)
+                        .foregroundStyle(.white.opacity(0.7))
+                        .frame(width: 68, height: 68)
+                }
+                Text("その他")
+                    .font(.caption.weight(.bold))
+                Text("選手なし")
+                    .font(.caption2)
+                    .foregroundStyle(.white.opacity(0.68))
+            }
+            .foregroundStyle(.white)
+        }
+        .buttonStyle(.plain)
     }
 
     private func kickPlayerButton(_ player: Player) -> some View {
@@ -816,6 +948,9 @@ struct V3RecordingView: View {
         } else {
             stopTeam2(at: now)
             team1State.start(at: now)
+            withAnimation(.easeInOut(duration: 0.16)) {
+                selectedInputTeamID = match.homeTeamID
+            }
         }
     }
 
@@ -827,6 +962,9 @@ struct V3RecordingView: View {
         } else {
             stopTeam1(at: now)
             team2State.start(at: now)
+            withAnimation(.easeInOut(duration: 0.16)) {
+                selectedInputTeamID = match.awayTeamID
+            }
         }
     }
 
@@ -880,6 +1018,8 @@ struct V3RecordingView: View {
     }
 
     private func recordScore(_ category: ScoringCategory) {
+        pendingScorerAttempt = nil
+        pendingKickAttempt = nil
         pendingSetPieceAttempt = nil
 
         if category.requiresResultSelection {
@@ -892,7 +1032,26 @@ struct V3RecordingView: View {
             return
         }
 
-        saveScoreEvent(category: category, outcome: "success", opensPlayerSheet: true)
+        pendingScorerAttempt = PendingScorerAttempt(
+            category: category,
+            teamID: selectedInputTeam,
+            seconds: timeState.elapsedSeconds(at: Date()),
+            half: currentHalf
+        )
+    }
+
+    private func recordPendingScorer() {
+        guard let attempt = pendingScorerAttempt, attempt.hasSelectedPlayer else { return }
+        pendingScorerAttempt = nil
+        saveScoreEvent(
+            category: attempt.category,
+            outcome: "success",
+            teamID: attempt.teamID,
+            playerID: attempt.playerID,
+            seconds: attempt.seconds,
+            half: attempt.half,
+            opensPlayerSheet: false
+        )
     }
 
     private func recordPendingKick(outcome: String) {
@@ -1047,6 +1206,15 @@ struct V3RecordingView: View {
     }
 }
 
+private struct PendingScorerAttempt {
+    let category: ScoringCategory
+    let teamID: UUID
+    let seconds: Int
+    let half: Int
+    var playerID: UUID?
+    var hasSelectedPlayer = false
+}
+
 private struct PendingKickAttempt {
     let category: ScoringCategory
     let teamID: UUID
@@ -1066,7 +1234,9 @@ private struct PendingSetPieceAttempt {
 }
 
 private struct V3TimerState {
-    private var accumulatedSeconds = 0
+    // 表示は分:秒だが、内部では秒以下のずれを失わないよう TimeInterval (Double) で持つ。
+    // これで 1 秒未満の停止/開始を繰り返しても累積していく（00:00 のまま固まらない）。
+    private var accumulatedSeconds: TimeInterval = 0
     private var startedAt: Date?
 
     var isRunning: Bool {
@@ -1088,10 +1258,10 @@ private struct V3TimerState {
 
     mutating func stop(at date: Date) -> Int? {
         guard let startedAt else { return nil }
-        let intervalSeconds = max(0, Int(date.timeIntervalSince(startedAt)))
-        accumulatedSeconds += intervalSeconds
+        let interval = max(0, date.timeIntervalSince(startedAt))
+        accumulatedSeconds += interval
         self.startedAt = nil
-        return intervalSeconds
+        return Int(interval)
     }
 
     mutating func reset() {
@@ -1105,10 +1275,14 @@ private struct V3TimerState {
     }
 
     func elapsedSeconds(at date: Date) -> Int {
+        Int(elapsedInterval(at: date))
+    }
+
+    func elapsedInterval(at date: Date) -> TimeInterval {
         guard let startedAt else {
             return accumulatedSeconds
         }
-        return accumulatedSeconds + max(0, Int(date.timeIntervalSince(startedAt)))
+        return accumulatedSeconds + max(0, date.timeIntervalSince(startedAt))
     }
 }
 
