@@ -108,6 +108,34 @@ final class StatEvent {
 }
 
 @Model
+final class MatchLineup {
+    @Attribute(.unique) var id: UUID
+    var matchID: UUID
+    var teamID: UUID
+    var playerID: UUID
+    // "starter" / "reserve"
+    var role: String
+    // 表示順（同一 matchID × teamID × role 内で 0 から昇順）
+    var order: Int
+
+    init(
+        id: UUID = UUID(),
+        matchID: UUID,
+        teamID: UUID,
+        playerID: UUID,
+        role: String,
+        order: Int
+    ) {
+        self.id = id
+        self.matchID = matchID
+        self.teamID = teamID
+        self.playerID = playerID
+        self.role = role
+        self.order = order
+    }
+}
+
+@Model
 final class Substitution {
     @Attribute(.unique) var id: UUID
     var matchID: UUID

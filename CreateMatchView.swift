@@ -92,7 +92,9 @@ struct CreateMatchView: View {
             Text(alertMessage ?? "入力内容を確認してください。")
         }
         .navigationDestination(item: $recordingMatch) { match in
-            V3RecordingView(match: match)
+            // 記録の前にスタメン/リザーブを登録する画面を挟む。
+            // この画面の「保存」で V3RecordingView へ遷移する。
+            LineupRegistrationView(match: match)
         }
     }
 
@@ -233,6 +235,7 @@ private struct TeamSelectionFields: View {
         Tournament.self,
         Match.self,
         StatEvent.self,
+        MatchLineup.self,
         Substitution.self
     ], inMemory: true)
 }

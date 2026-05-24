@@ -20,6 +20,7 @@ struct Rugby_ASApp: App {
             Tournament.self,
             Match.self,
             StatEvent.self,
+            MatchLineup.self,
             Substitution.self
         ])
     }

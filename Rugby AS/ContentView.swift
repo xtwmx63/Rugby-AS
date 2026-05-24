@@ -32,7 +32,9 @@ struct ContentView: View {
                             if isFinished(match) {
                                 MatchSummaryView(match: match)
                             } else {
-                                V3RecordingView(match: match)
+                                // 記録前にスタメン/リザーブの確認・編集を挟む。
+                                // 「保存」で V3RecordingView に進む。
+                                LineupRegistrationView(match: match)
                             }
                         } label: {
                             MatchRow(

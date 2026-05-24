@@ -15,6 +15,7 @@
 		CB170E4E2FB8F514006E7CFC /* MatchSummaryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CB170E4D2FB8F514006E7CFC /* MatchSummaryView.swift */; };
 		CB170E502FBB0E18006E7CFC /* V3RecordingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CB170E4F2FBB0E18006E7CFC /* V3RecordingView.swift */; };
 		CB3318522FBE0DD600368ACC /* ImageStorage.swift in Sources */ = {isa = PBXBuildFile; fileRef = CB3318512FBE0DD600368ACC /* ImageStorage.swift */; };
+		CB9FBA0D2FC2455B00ADC6A3 /* LineupRegistrationView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CB9FBA0C2FC2455B00ADC6A3 /* LineupRegistrationView.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -26,6 +27,7 @@
 		CB170E4D2FB8F514006E7CFC /* MatchSummaryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MatchSummaryView.swift; sourceTree = "<group>"; };
 		CB170E4F2FBB0E18006E7CFC /* V3RecordingView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = V3RecordingView.swift; sourceTree = "<group>"; };
 		CB3318512FBE0DD600368ACC /* ImageStorage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ImageStorage.swift; sourceTree = "<group>"; };
+		CB9FBA0C2FC2455B00ADC6A3 /* LineupRegistrationView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LineupRegistrationView.swift; sourceTree = "<group>"; };
 		CBF67CA62FB8E34C006E5EC5 /* Rugby AS.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "Rugby AS.app"; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
@@ -61,6 +63,7 @@
 				CB170E4B2FB8F1C6006E7CFC /* RecordingView.swift */,
 				CB170E4D2FB8F514006E7CFC /* MatchSummaryView.swift */,
 				CB170E4F2FBB0E18006E7CFC /* V3RecordingView.swift */,
+				CB9FBA0C2FC2455B00ADC6A3 /* LineupRegistrationView.swift */,
 			);
 			sourceTree = "<group>";
 		};
@@ -154,6 +157,7 @@
 				CB3318522FBE0DD600368ACC /* ImageStorage.swift in Sources */,
 				CB170E462FB8EEB3006E7CFC /* TeamViews.swift in Sources */,
 				CB170E4E2FB8F514006E7CFC /* MatchSummaryView.swift in Sources */,
+				CB9FBA0D2FC2455B00ADC6A3 /* LineupRegistrationView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
