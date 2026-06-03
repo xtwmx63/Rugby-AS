@@ -982,19 +982,34 @@ struct V3RecordingView: View {
         stopTeam1(at: date)
         stopTeam2(at: date)
         if let seconds = bipState.stop(at: date) {
-            savePossessionEvent(teamID: nil, outcome: "none", seconds: seconds)
+            savePossessionEvent(
+                teamID: nil,
+                outcome: "none",
+                seconds: seconds,
+                startSeconds: max(0, timeState.elapsedSeconds(at: date) - seconds)
+            )
         }
     }
 
     private func stopTeam1(at date: Date) {
         if let seconds = team1State.stop(at: date) {
-            savePossessionEvent(teamID: match.homeTeamID, outcome: "own", seconds: seconds)
+            savePossessionEvent(
+                teamID: match.homeTeamID,
+                outcome: "own",
+                seconds: seconds,
+                startSeconds: max(0, timeState.elapsedSeconds(at: date) - seconds)
+            )
         }
     }
 
     private func stopTeam2(at date: Date) {
         if let seconds = team2State.stop(at: date) {
-            savePossessionEvent(teamID: match.awayTeamID, outcome: "own", seconds: seconds)
+            savePossessionEvent(
+                teamID: match.awayTeamID,
+                outcome: "own",
+                seconds: seconds,
+                startSeconds: max(0, timeState.elapsedSeconds(at: date) - seconds)
+            )
         }
     }
 
@@ -1161,7 +1176,7 @@ struct V3RecordingView: View {
         try? modelContext.save()
     }
 
-    private func savePossessionEvent(teamID: UUID?, outcome: String, seconds: Int) {
+    private func savePossessionEvent(teamID: UUID?, outcome: String, seconds: Int, startSeconds: Int? = nil) {
         guard seconds > 0 else { return }
 
         let event = StatEvent(
@@ -1170,6 +1185,7 @@ struct V3RecordingView: View {
             category: "possession",
             outcome: outcome,
             seconds: seconds,
+            startSeconds: startSeconds,
             half: currentHalf
         )
         modelContext.insert(event)

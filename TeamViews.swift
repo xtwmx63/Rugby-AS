@@ -9,6 +9,193 @@ import PhotosUI
 import SwiftData
 import SwiftUI
 
+// MARK: - Color hex helpers
+
+extension Color {
+    /// "#RRGGBB" 形式の文字列から Color を作る。フォーマット不正なら nil。
+    init?(hex: String) {
+        var trimmed = hex.trimmingCharacters(in: .whitespaces)
+        if trimmed.hasPrefix("#") { trimmed.removeFirst() }
+        guard trimmed.count == 6, let value = UInt32(trimmed, radix: 16) else { return nil }
+        let r = Double((value >> 16) & 0xFF) / 255
+        let g = Double((value >> 8) & 0xFF) / 255
+        let b = Double(value & 0xFF) / 255
+        self = Color(red: r, green: g, blue: b)
+    }
+
+    /// 現在の Color を "#RRGGBB" 形式の文字列に変換する。
+    func toHexString() -> String? {
+        let uiColor = UIColor(self)
+        var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
+        guard uiColor.getRed(&r, green: &g, blue: &b, alpha: &a) else { return nil }
+        return String(
+            format: "#%02X%02X%02X",
+            Int((r * 255).rounded()),
+            Int((g * 255).rounded()),
+            Int((b * 255).rounded())
+        )
+    }
+
+    /// 別の色との RGB 距離（0〜sqrt(3)）。値が小さいほど近い。
+    func rgbDistance(to other: Color) -> Double {
+        let lhs = UIColor(self)
+        let rhs = UIColor(other)
+        var lr: CGFloat = 0, lg: CGFloat = 0, lb: CGFloat = 0, la: CGFloat = 0
+        var rr: CGFloat = 0, rg: CGFloat = 0, rb: CGFloat = 0, ra: CGFloat = 0
+        guard lhs.getRed(&lr, green: &lg, blue: &lb, alpha: &la),
+              rhs.getRed(&rr, green: &rg, blue: &rb, alpha: &ra) else { return 0 }
+        let dr = Double(lr - rr)
+        let dg = Double(lg - rg)
+        let db = Double(lb - rb)
+        return (dr * dr + dg * dg + db * db).squareRoot()
+    }
+
+    /// HSB の brightness（0〜1）。視覚的な明るさの近似に使う。
+    var hsbBrightness: Double {
+        let ui = UIColor(self)
+        var h: CGFloat = 0, s: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
+        guard ui.getHue(&h, saturation: &s, brightness: &b, alpha: &a) else { return 1 }
+        return Double(b)
+    }
+
+    /// HSB の hue（0〜1、円環状）。
+    var hsbHue: Double {
+        let ui = UIColor(self)
+        var h: CGFloat = 0, s: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
+        guard ui.getHue(&h, saturation: &s, brightness: &b, alpha: &a) else { return 0 }
+        return Double(h)
+    }
+
+    /// 円環上の色相距離（0〜0.5）。小さいほど同系色。
+    func hueDistance(to other: Color) -> Double {
+        let diff = abs(self.hsbHue - other.hsbHue)
+        return min(diff, 1 - diff)
+    }
+
+    /// 色相・彩度はそのままに、brightness だけ差し替えた Color を返す。
+    func withBrightness(_ newBrightness: Double) -> Color {
+        let ui = UIColor(self)
+        var h: CGFloat = 0, s: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
+        guard ui.getHue(&h, saturation: &s, brightness: &b, alpha: &a) else { return self }
+        return Color(
+            hue: Double(h),
+            saturation: Double(s),
+            brightness: max(0, min(1, newBrightness))
+        )
+    }
+}
+
+// MARK: - Team color palette
+
+/// チームカラーの選択肢。極端に濃い/薄い色や、対戦時に区別しづらい色を避けた
+/// 視認性の高い 29 色のパレット。
+struct TeamColorOption: Identifiable, Hashable {
+    let hex: String
+    let name: String
+    var id: String { hex }
+    var color: Color { Color(hex: hex) ?? .gray }
+}
+
+enum TeamColorPalette {
+    // スペクトラム順（赤 → 橙 → 黄 → 緑 → 青緑 → 青 → 紫 → 桃 → 茶 → 中性）に並べる。
+    // 視認性確保のため、彩度・明度はどれも中〜やや濃いめのトーンに揃えている。
+    // 29 色（未設定と合わせて 5×6 グリッド）。
+    static let options: [TeamColorOption] = [
+        // 赤系
+        .init(hex: "#B71C1C", name: "クリムゾン"),
+        .init(hex: "#E53935", name: "レッド"),
+        .init(hex: "#FF7043", name: "コーラル"),
+        .init(hex: "#FF8A65", name: "サーモン"),
+
+        // 橙系
+        .init(hex: "#EF6C00", name: "パンプキン"),
+        .init(hex: "#FB8C00", name: "オレンジ"),
+        .init(hex: "#FFB300", name: "アンバー"),
+
+        // 黄系
+        .init(hex: "#FDD835", name: "イエロー"),
+        .init(hex: "#827717", name: "オリーブ"),
+
+        // 緑系
+        .init(hex: "#C0CA33", name: "ライム"),
+        .init(hex: "#43A047", name: "グリーン"),
+        .init(hex: "#1B5E20", name: "フォレスト"),
+        .init(hex: "#4DB6AC", name: "ミント"),
+
+        // 青緑系
+        .init(hex: "#00897B", name: "ティール"),
+        .init(hex: "#00ACC1", name: "シアン"),
+        .init(hex: "#26C6DA", name: "アクア"),
+
+        // 青系
+        .init(hex: "#29B6F6", name: "スカイ"),
+        .init(hex: "#1E88E5", name: "ブルー"),
+        .init(hex: "#3949AB", name: "ネイビー"),
+        .init(hex: "#5C6BC0", name: "インディゴ"),
+
+        // 紫系
+        .init(hex: "#9575CD", name: "ラベンダー"),
+        .init(hex: "#8E24AA", name: "パープル"),
+        .init(hex: "#6A1B9A", name: "プラム"),
+
+        // 桃系
+        .init(hex: "#BA1FAB", name: "マゼンタ"),
+        .init(hex: "#D81B60", name: "ピンク"),
+        .init(hex: "#EC407A", name: "ローズピンク"),
+
+        // 茶系
+        .init(hex: "#6D4C41", name: "ブラウン"),
+        .init(hex: "#A1887F", name: "キャメル"),
+
+        // 中性
+        .init(hex: "#546E7A", name: "スレート")
+    ]
+
+    /// AWAY 用の色を返す。
+    /// - RGB 距離が `minDistance` 以上、かつ色相距離が `minHueDistance` 以上であれば
+    ///   ユーザの選んだ色 (preferred) をそのまま採用。
+    /// - どちらかが満たせない場合、パレットから両条件を満たす中で preferred に
+    ///   一番近い色へ差し替える。
+    static func nearestDistinct(
+        from preferred: Color,
+        against home: Color,
+        minDistance: Double,
+        minHueDistance: Double = 0.04
+    ) -> Color {
+        let rgbOK = home.rgbDistance(to: preferred) >= minDistance
+        let hueOK = home.hueDistance(to: preferred) >= minHueDistance
+        if rgbOK && hueOK {
+            return preferred
+        }
+
+        var bestColor: Color?
+        var bestSimilarity = Double.infinity
+        for option in options {
+            let candidate = option.color
+            guard home.rgbDistance(to: candidate) >= minDistance else { continue }
+            guard home.hueDistance(to: candidate) >= minHueDistance else { continue }
+            let similarity = preferred.rgbDistance(to: candidate)
+            if similarity < bestSimilarity {
+                bestSimilarity = similarity
+                bestColor = candidate
+            }
+        }
+
+        if let best = bestColor { return best }
+
+        var fallback = preferred
+        var fallbackDistance: Double = 0
+        for option in options {
+            let distance = home.rgbDistance(to: option.color)
+            if distance > fallbackDistance {
+                fallbackDistance = distance
+                fallback = option.color
+            }
+        }
+        return fallback
+    }
+}
+
 struct TeamListView: View {
     @Environment(\.modelContext) private var modelContext
     @Query(sort: \Team.name) private var teams: [Team]
@@ -195,6 +382,23 @@ struct TeamEditorView: View {
             }
 
             Section {
+                LazyVGrid(
+                    columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: 5),
+                    spacing: 14
+                ) {
+                    teamColorSwatch(hex: nil, name: "未設定")
+                    ForEach(TeamColorPalette.options) { option in
+                        teamColorSwatch(hex: option.hex, name: option.name)
+                    }
+                }
+                .padding(.vertical, 4)
+            } header: {
+                Text("チームカラー")
+            } footer: {
+                Text("サマリー画面の比較表示でチームの色として使われます。記録画面の色は変わりません。")
+            }
+
+            Section {
                 ForEach(players) { player in
                     PlayerRow(player: player)
                 }
@@ -215,7 +419,7 @@ struct TeamEditorView: View {
         .onAppear {
             ensureInitialPlayers()
         }
-        .onChange(of: logoPickerItem) { newItem in
+        .onChange(of: logoPickerItem) { _, newItem in
             handleSelectedLogo(newItem)
         }
         .confirmationDialog(
@@ -228,6 +432,46 @@ struct TeamEditorView: View {
             }
             Button("キャンセル", role: .cancel) { }
         }
+    }
+
+    @ViewBuilder
+    private func teamColorSwatch(hex: String?, name: String) -> some View {
+        let isSelected = team.colorHex == hex
+        Button {
+            team.colorHex = hex
+            try? modelContext.save()
+        } label: {
+            VStack(spacing: 4) {
+                ZStack {
+                    if let hex, let color = Color(hex: hex) {
+                        Circle()
+                            .fill(color)
+                    } else {
+                        Circle()
+                            .stroke(Color.secondary.opacity(0.6), style: StrokeStyle(lineWidth: 1.5, dash: [3]))
+                            .background(Circle().fill(Color(.systemBackground)))
+                            .overlay(
+                                Image(systemName: "circle.slash")
+                                    .font(.headline)
+                                    .foregroundStyle(.secondary)
+                            )
+                    }
+                    if isSelected {
+                        Circle()
+                            .stroke(Color.primary, lineWidth: 3)
+                    }
+                }
+                .frame(width: 40, height: 40)
+
+                Text(name)
+                    .font(.caption2)
+                    .foregroundStyle(isSelected ? .primary : .secondary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.55)
+            }
+            .frame(maxWidth: .infinity)
+        }
+        .buttonStyle(.plain)
     }
 
     @ViewBuilder
@@ -317,7 +561,7 @@ private struct PlayerRow: View {
                 .buttonStyle(.plain)
             }
         }
-        .onChange(of: photoPickerItem) { newItem in
+        .onChange(of: photoPickerItem) { _, newItem in
             handleSelectedPhoto(newItem)
         }
         .confirmationDialog(
