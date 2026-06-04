@@ -19,6 +19,7 @@ struct MatchSummaryView: View {
 
     @State private var scoringEventForPlayerSelection: StatEvent?
     @State private var isRecordingPresented = false
+    @State private var isTimelineEditorPresented = false
     @State private var selectedScope: SummaryScope = .all
 
     private enum SummaryScope: String, CaseIterable, Identifiable {
@@ -193,6 +194,9 @@ struct MatchSummaryView: View {
         .fullScreenCover(isPresented: $isRecordingPresented) {
             V3RecordingView(match: match)
         }
+        .fullScreenCover(isPresented: $isTimelineEditorPresented) {
+            TimelineEditorView(match: match)
+        }
         .sheet(item: $scoringEventForPlayerSelection) { event in
             PlayerSelectionSheet(players: players, title: "得点者を選択") { player in
                 event.playerID = player?.id
@@ -241,8 +245,8 @@ struct MatchSummaryView: View {
                 Spacer()
 
                 HStack(spacing: 8) {
-                    NavigationLink {
-                        TimelineEditorView(match: match)
+                    Button {
+                        isTimelineEditorPresented = true
                     } label: {
                         Text("編集")
                             .font(.subheadline.weight(.bold))
