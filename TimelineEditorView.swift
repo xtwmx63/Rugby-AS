@@ -583,11 +583,23 @@ struct TimelineEditorView: View {
                         selectedTimelineEventID = item.id
                     }
                 },
+                onDragChanged: { _, translation, location in
+                    handleTimelineMoveDrag(
+                        translation: translation,
+                        location: location,
+                        maxSeconds: maxSeconds
+                    )
+                },
                 onDragEnded: { item, translation in
-                    let secondsDelta = Int((translation / timelinePointsPerSecond(maxSeconds: maxSeconds, contentWidth: contentWidth)).rounded())
+                    let movePixels = translation + timelineAutoScrollAccumulatedPixels
+                    defer { resetTimelineAutoScroll() }
+                    let secondsDelta = Int((movePixels / timelinePointsPerSecond(maxSeconds: maxSeconds, contentWidth: contentWidth)).rounded())
                     guard secondsDelta != 0 else { return }
                     let updatedSecond = clampedTimelineSecond(for: item.event, proposedSecond: item.startSeconds + secondsDelta)
                     updateTimelineEvent(item.event, toTimelineSecond: updatedSecond)
+                },
+                onDragCancelled: {
+                    resetTimelineAutoScroll()
                 },
                 onResizeStartEnded: { item, translation in
                     defer { resetTimelineAutoScroll() }
@@ -909,9 +921,17 @@ struct TimelineEditorView: View {
         let visibleStart = Int((scrollOffset / pointsPerSecond).rounded(.down)) - bufferSeconds
         let visibleEnd = Int(((scrollOffset + trackViewportWidth) / pointsPerSecond).rounded(.up)) + bufferSeconds
 
-        return Array(trackEvents.lazy.filter { event in
+        var visibleEvents = Array(trackEvents.lazy.filter { event in
             event.endSeconds >= visibleStart && event.startSeconds <= visibleEnd
         }.prefix(96))
+
+        if let selectedTimelineEventID,
+           !visibleEvents.contains(where: { $0.id == selectedTimelineEventID }),
+           let selectedEvent = trackEvents.first(where: { $0.id == selectedTimelineEventID }) {
+            visibleEvents.append(selectedEvent)
+        }
+
+        return visibleEvents
     }
 
     private func updateTimelineEvent(_ event: StatEvent, toTimelineSecond timelineSecond: Int) {
@@ -953,6 +973,52 @@ struct TimelineEditorView: View {
         translation * resizeSensitivity
     }
 
+    private func handleTimelineMoveDrag(
+        translation: CGFloat,
+        location: CGPoint,
+        maxSeconds: Int
+    ) {
+        guard timelineViewportFrame.width > 0 else { return }
+
+        let rightLimit = timelineViewportFrame.maxX - timelineAutoScrollEdgeInset
+        let leftLimit = timelineViewportFrame.minX + timelineAutoScrollEdgeInset
+        let rightOverflow = max(0, location.x - rightLimit)
+        let leftOverflow = max(0, leftLimit - location.x)
+        let dragDirection = translation < -8 ? -1 : (translation > 8 ? 1 : 0)
+        let pullOverflow = max(0, abs(translation) - 84)
+
+        let direction: Int
+        let overflow: CGFloat
+        if dragDirection < 0 {
+            direction = -1
+            overflow = max(leftOverflow, pullOverflow)
+        } else if dragDirection > 0 {
+            direction = 1
+            overflow = max(rightOverflow, pullOverflow)
+        } else if leftOverflow > 0 {
+            direction = -1
+            overflow = leftOverflow
+        } else if rightOverflow > 0 {
+            direction = 1
+            overflow = rightOverflow
+        } else {
+            stopTimelineAutoScroll()
+            return
+        }
+
+        guard overflow > 0 else {
+            stopTimelineAutoScroll()
+            return
+        }
+
+        let normalizedOverflow = timelineAutoScrollPower(for: overflow)
+        startTimelineAutoScroll(
+            direction: direction,
+            maxSeconds: maxSeconds,
+            intensity: normalizedOverflow
+        )
+    }
+
     private func handleTimelineResizeDrag(
         edge: TimelineResizeEdge,
         translation: CGFloat,
@@ -983,36 +1049,46 @@ struct TimelineEditorView: View {
             return
         }
 
-        let normalizedOverflow = min(1.0, overflow / timelineAutoScrollEdgeInset)
+        let normalizedOverflow = timelineAutoScrollPower(for: overflow)
         startTimelineAutoScroll(
             direction: direction,
             maxSeconds: maxSeconds,
             intensity: normalizedOverflow
         )
-        advanceTimelineAutoScroll(
-            direction: direction,
-            maxSeconds: maxSeconds,
-            step: timelineAutoScrollStep * (0.35 + normalizedOverflow)
-        )
+    }
+
+    private func timelineAutoScrollPower(for overflow: CGFloat) -> CGFloat {
+        let normalized = min(1.0, max(0, overflow) / (timelineAutoScrollEdgeInset * 1.45))
+        return normalized * normalized * (3 - 2 * normalized)
+    }
+
+    private func timelineAutoScrollRepeatingStep(for power: CGFloat) -> CGFloat {
+        timelineAutoScrollStep * (0.08 + power * 2.45)
     }
 
     private func startTimelineAutoScroll(direction: Int, maxSeconds: Int, intensity: CGFloat) {
-        timelineAutoScrollDirection = direction
-        timelineAutoScrollMaxSeconds = maxSeconds
-        timelineAutoScrollIntensity = intensity
+        let shouldUpdateState = timelineAutoScrollDirection != direction
+            || timelineAutoScrollMaxSeconds != maxSeconds
+            || abs(timelineAutoScrollIntensity - intensity) > 0.035
+
+        if shouldUpdateState {
+            timelineAutoScrollDirection = direction
+            timelineAutoScrollMaxSeconds = maxSeconds
+            timelineAutoScrollIntensity = intensity
+        }
 
         guard timelineAutoScrollTask == nil else { return }
 
         timelineAutoScrollTask = Task { @MainActor in
             while !Task.isCancelled {
                 guard timelineAutoScrollDirection != 0 else { break }
-                let step = timelineAutoScrollStep * (0.75 + timelineAutoScrollIntensity * 2.4)
+                let step = timelineAutoScrollRepeatingStep(for: timelineAutoScrollIntensity)
                 advanceTimelineAutoScroll(
                     direction: timelineAutoScrollDirection,
                     maxSeconds: timelineAutoScrollMaxSeconds,
                     step: step
                 )
-                try? await Task.sleep(for: .milliseconds(95))
+                try? await Task.sleep(for: .milliseconds(85))
             }
             timelineAutoScrollTask = nil
         }
@@ -1035,6 +1111,11 @@ struct TimelineEditorView: View {
     }
 
     private func stopTimelineAutoScroll() {
+        guard timelineAutoScrollDirection != 0
+                || timelineAutoScrollIntensity != 0
+                || timelineAutoScrollTask != nil else {
+            return
+        }
         timelineAutoScrollDirection = 0
         timelineAutoScrollIntensity = 0
         timelineAutoScrollTask?.cancel()
@@ -1065,7 +1146,6 @@ struct TimelineEditorView: View {
             saveErrorMessage = "変更を保存できませんでした。もう一度試してください。"
         }
     }
-
     private var pointsPerSecond: CGFloat {
         2.4 * timelineZoom
     }
@@ -2056,7 +2136,9 @@ private struct TimelineEventBlocksLayer: View, Equatable {
     let resizeSensitivity: CGFloat
     let resizeAutoScrollTranslation: CGFloat
     let onTap: (TimelineRenderEvent) -> Void
+    let onDragChanged: (TimelineRenderEvent, CGFloat, CGPoint) -> Void
     let onDragEnded: (TimelineRenderEvent, CGFloat) -> Void
+    let onDragCancelled: () -> Void
     let onResizeStartEnded: (TimelineRenderEvent, CGFloat) -> Void
     let onResizeEndEnded: (TimelineRenderEvent, CGFloat) -> Void
     let onResizeDragChanged: (TimelineResizeEdge, CGFloat, CGPoint) -> Void
@@ -2118,9 +2200,13 @@ private struct TimelineEventBlocksLayer: View, Equatable {
             onTap: {
                 onTap(event)
             },
+            onDragChanged: { translation, location in
+                onDragChanged(event, translation, location)
+            },
             onDragEnded: { translation in
                 onDragEnded(event, translation)
             },
+            onDragCancelled: onDragCancelled,
             onResizeStartEnded: { translation in
                 onResizeStartEnded(event, translation)
             },
@@ -2158,7 +2244,9 @@ private struct TimelineEventBlockView: View, Equatable {
     let resizeSensitivity: CGFloat
     let resizeAutoScrollTranslation: CGFloat
     let onTap: () -> Void
+    let onDragChanged: (CGFloat, CGPoint) -> Void
     let onDragEnded: (CGFloat) -> Void
+    let onDragCancelled: () -> Void
     let onResizeStartEnded: (CGFloat) -> Void
     let onResizeEndEnded: (CGFloat) -> Void
     let onResizeDragChanged: (TimelineResizeEdge, CGFloat, CGPoint) -> Void
@@ -2184,7 +2272,8 @@ private struct TimelineEventBlockView: View, Equatable {
     }
 
     private var currentX: CGFloat {
-        return min(max(0, baseX + dragState.translation), maxX)
+        let autoScrollTranslation = dragState.isActive ? resizeAutoScrollTranslation : 0
+        return min(max(0, baseX + dragState.translation + autoScrollTranslation), maxX)
     }
 
     private var previewX: CGFloat {
@@ -2241,7 +2330,7 @@ private struct TimelineEventBlockView: View, Equatable {
 
     private var dragGesture: some Gesture {
         LongPressGesture(minimumDuration: 0.28)
-            .sequenced(before: DragGesture(minimumDistance: 0))
+            .sequenced(before: DragGesture(minimumDistance: 0, coordinateSpace: .global))
             .updating($dragState) { value, state, _ in
                 switch value {
                 case .first(true):
@@ -2252,8 +2341,15 @@ private struct TimelineEventBlockView: View, Equatable {
                     state = .inactive
                 }
             }
-            .onEnded { value in
+            .onChanged { value in
                 guard case .second(true, let drag?) = value else { return }
+                onDragChanged(drag.translation.width, drag.location)
+            }
+            .onEnded { value in
+                guard case .second(true, let drag?) = value else {
+                    onDragCancelled()
+                    return
+                }
                 onDragEnded(drag.translation.width)
             }
     }
