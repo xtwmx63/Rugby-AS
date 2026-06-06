@@ -15,18 +15,24 @@ struct TimelineEditorView: View {
 
     let match: Match
 
-    @State private var selectedScope: TimelineScope = .all
+    @State private var selectedScope: TimelineScope = .first
     @State private var selectedEvent: StatEvent?
     @State private var selectedTimelineEventID: UUID?
+    @State private var isAddEventSheetPresented = false
+    @State private var categoryPendingAddition: TimelineEventCategory = .tryScore
+    @State private var isDeleteConfirmationPresented = false
+    @State private var eventPendingDeletion: TimelineDeletionCandidate?
     @State private var events: [StatEvent] = []
     @State private var players: [Player] = []
     @State private var teams: [Team] = []
     @State private var didLoad = false
     @State private var saveErrorMessage: String?
-    @State private var timelineZoom: CGFloat = 1.0
-    @State private var baseTimelineZoom: CGFloat = 1.0
+    @State private var timelineZoom: CGFloat = 0.035
+    @State private var baseTimelineZoom: CGFloat = 0.035
     @State private var isEventListExpanded = false
     @State private var pendingTimelineSaveTask: Task<Void, Never>?
+    @State private var timelinePlaybackTask: Task<Void, Never>?
+    @State private var isTimelinePlaying = false
     @State private var timelineViewportFrame: CGRect = .zero
     @State private var timelineAutoScrollAccumulatedPixels: CGFloat = 0
     @State private var timelineScrollOffset: CGFloat = 0
@@ -39,41 +45,49 @@ struct TimelineEditorView: View {
     @State private var timelineRenderOffset: CGFloat = 0
     @State private var timelineRenderedViewportWidth: CGFloat = 0
     @State private var timelineRenderWindow = TimelineRenderWindow.empty
+    @State private var timelineAvailableViewportWidth: CGFloat = 0
+    @State private var isTimelineScrollSyncSuppressed = false
+    @State private var isTimelineOverviewMode = true
+    @State private var playheadTimelineSecond: Double = 0
+    @State private var didSetInitialPlayheadPosition = false
 
-    private let minimumTimelineZoom: CGFloat = 0.05
+    private let minimumTimelineZoom: CGFloat = 0.035
     private let maximumTimelineZoom: CGFloat = 10.0
     private let resizeSensitivity: CGFloat = 1.35
     private let timelineAutoScrollEdgeInset: CGFloat = 76
     private let timelineAutoScrollStep: CGFloat = 34
     private let timelineTrackLabelWidth: CGFloat = 96
+    private let timelineRulerHeight: CGFloat = 44
+    private let timelineTrackRowHeight: CGFloat = 42
     private let timelineRenderBucketWidth: CGFloat = 720
     private let timelineRenderPadding: CGFloat = 960
+    private let defaultHalfTimelineSeconds = 40 * 60
     private let trackDefinitions: [TimelineTrackDefinition] = [
-        TimelineTrackDefinition(title: "HOME", systemImage: "house.fill", color: .blue) { event, match in
+        TimelineTrackDefinition(title: "HOME", systemImage: "house.fill", color: .timelineHome) { event, match in
             event.category == "possession" && (event.teamID == match.homeTeamID || (event.teamID == nil && event.outcome == "own"))
         },
-        TimelineTrackDefinition(title: "AWAY", systemImage: "a.circle.fill", color: .red) { event, match in
+        TimelineTrackDefinition(title: "AWAY", systemImage: "a.circle.fill", color: .timelineAway) { event, match in
             event.category == "possession" && (event.teamID == match.awayTeamID || (event.teamID == nil && event.outcome == "opponent"))
         },
-        TimelineTrackDefinition(title: "BIP", systemImage: "clock.fill", color: .indigo) { event, _ in
+        TimelineTrackDefinition(title: "BIP", systemImage: "clock.fill", color: .timelineBIP) { event, _ in
             event.category == "possession" && event.outcome == "none"
         },
-        TimelineTrackDefinition(title: "TRY", systemImage: "rugbyball.fill", color: .purple) { event, _ in
+        TimelineTrackDefinition(title: "TRY", systemImage: "rugbyball.fill", color: .timelineTry) { event, _ in
             event.category == "try"
         },
-        TimelineTrackDefinition(title: "CONV", systemImage: "figure.rugby", color: .green) { event, _ in
+        TimelineTrackDefinition(title: "CONV", systemImage: "figure.rugby", color: .timelineConversion) { event, _ in
             event.category == "conversion"
         },
-        TimelineTrackDefinition(title: "PG", systemImage: "p.circle.fill", color: .yellow) { event, _ in
+        TimelineTrackDefinition(title: "PG", systemImage: "p.circle.fill", color: .timelineKick) { event, _ in
             event.category == "penalty_goal"
         },
-        TimelineTrackDefinition(title: "DG", systemImage: "d.circle.fill", color: .yellow) { event, _ in
+        TimelineTrackDefinition(title: "DG", systemImage: "d.circle.fill", color: .timelineKick) { event, _ in
             event.category == "drop_goal"
         },
-        TimelineTrackDefinition(title: "LO", systemImage: "figure.strengthtraining.traditional", color: .teal) { event, _ in
+        TimelineTrackDefinition(title: "LO", systemImage: "figure.strengthtraining.traditional", color: .timelineLineout) { event, _ in
             event.category == "lineout"
         },
-        TimelineTrackDefinition(title: "SCR", systemImage: "person.3.fill", color: .orange) { event, _ in
+        TimelineTrackDefinition(title: "SCR", systemImage: "person.3.fill", color: .timelineScrum) { event, _ in
             event.category == "scrum"
         }
     ]
@@ -126,20 +140,7 @@ struct TimelineEditorView: View {
                 topBar
 
                 if didLoad {
-                    ScrollView(.vertical, showsIndicators: true) {
-                        LazyVStack(spacing: 10) {
-                            matchInfoCard
-                            scopePicker
-                            trackSummary
-                            horizontalTimeline
-                            eventListToggle
-                            if isEventListExpanded {
-                                eventList
-                            }
-                        }
-                        .padding(.horizontal, 12)
-                        .padding(.bottom, 18)
-                    }
+                    editorSurface
                 } else {
                     loadingView
                 }
@@ -152,7 +153,13 @@ struct TimelineEditorView: View {
             await loadDataIfNeeded()
         }
         .onChange(of: selectedScope) { _, _ in
+            didSetInitialPlayheadPosition = false
+            stopTimelinePlayback()
             rebuildTimelinePresentation()
+        }
+        .onChange(of: timelineScrollOffset) { _, _ in
+            guard !isTimelineScrollSyncSuppressed else { return }
+            syncPlayheadWithScroll()
         }
         .alert("保存できませんでした", isPresented: Binding(
             get: { saveErrorMessage != nil },
@@ -172,12 +179,40 @@ struct TimelineEditorView: View {
                 impactText: scoreImpactText(for: event),
                 impactColor: scoreImpactColor(for: event),
                 accent: categoryColor(for: event),
-                onAdjust: { delta in adjust(event, by: delta) }
+                onAdjust: { delta in adjust(event, by: delta) },
+                onDelete: {
+                    requestDeleteTimelineEvent(event)
+                }
             )
             .presentationDetents([.medium])
         }
+        .sheet(isPresented: $isAddEventSheetPresented) {
+            TimelineEventAddSheet(
+                initialCategory: categoryPendingAddition,
+                initialHalf: selectedScope.half ?? 0,
+                homeTeamName: teamName(for: match.homeTeamID),
+                awayTeamName: teamName(for: match.awayTeamID),
+                homePlayers: players(forTeamID: match.homeTeamID),
+                awayPlayers: players(forTeamID: match.awayTeamID),
+                onAdd: { draft in
+                    addTimelineEvent(from: draft)
+                }
+            )
+            .presentationDetents([.large])
+        }
+        .confirmationDialog("イベントを削除しますか", isPresented: $isDeleteConfirmationPresented) {
+            Button("削除", role: .destructive) {
+                if let candidate = eventPendingDeletion,
+                   let event = events.first(where: { $0.id == candidate.id }) {
+                    deleteTimelineEvent(event)
+                }
+            }
+        } message: {
+            Text(eventPendingDeletion?.title ?? "")
+        }
         .onDisappear {
             pendingTimelineSaveTask?.cancel()
+            stopTimelinePlayback()
             resetTimelineAutoScroll()
             saveTimelineChanges()
         }
@@ -208,7 +243,7 @@ struct TimelineEditorView: View {
                     Image(systemName: "chevron.left")
                         .font(.title3.weight(.bold))
                         .foregroundStyle(.white)
-                        .frame(width: 44, height: 44)
+                        .frame(width: 40, height: 40)
                         .background(Color.white.opacity(0.12))
                         .clipShape(Circle())
                         .overlay(Circle().stroke(Color.white.opacity(0.16), lineWidth: 1))
@@ -217,24 +252,422 @@ struct TimelineEditorView: View {
 
                 Spacer()
 
-                Button {
-                    reloadData()
-                } label: {
-                    Image(systemName: "arrow.clockwise")
+                ShareLink(item: timelineShareText) {
+                    Image(systemName: "square.and.arrow.up")
                         .font(.headline.weight(.bold))
                         .foregroundStyle(.white)
-                        .frame(width: 44, height: 44)
+                        .frame(width: 40, height: 40)
                         .background(Color.white.opacity(0.10))
                         .clipShape(Circle())
                         .overlay(Circle().stroke(Color.white.opacity(0.14), lineWidth: 1))
                 }
                 .buttonStyle(.plain)
-                .accessibilityLabel("記録データを再読み込み")
+                .accessibilityLabel("タイムラインを書き出し")
             }
         }
         .frame(height: 54)
-        .padding(.horizontal, 12)
+        .padding(.horizontal, 14)
         .padding(.top, 4)
+    }
+
+    private var timelineShareText: String {
+        "\(teamName(for: match.homeTeamID)) \(score(for: match.homeTeamID)) - \(score(for: match.awayTeamID)) \(teamName(for: match.awayTeamID)) / \(timeText(playheadTimelineSecond))"
+    }
+
+    private var editorSurface: some View {
+        GeometryReader { geometry in
+            let verticalGap: CGFloat = 9
+            let previewHeight = min(max(geometry.size.height * 0.30, 188), 218)
+            let controlsHeight: CGFloat = 56
+            let hintHeight: CGFloat = 24
+            let actionStripHeight: CGFloat = 76
+            let calculatedTimelineHeight = max(
+                224,
+                geometry.size.height
+                    - previewHeight
+                    - controlsHeight
+                    - hintHeight
+                    - actionStripHeight
+                    - verticalGap * 4
+                    - 8
+            )
+            let timelineHeight = min(
+                calculatedTimelineHeight,
+                timelineRulerHeight + timelineTrackRowHeight * 5 + 1
+            )
+
+            ScrollView(.vertical, showsIndicators: false) {
+                VStack(spacing: verticalGap) {
+                    videoPreview
+                        .frame(height: previewHeight)
+
+                    playbackControls(maxSeconds: timelinePresentation.maxSeconds)
+                        .frame(height: controlsHeight)
+
+                    timelineEditorPanel
+                        .frame(height: timelineHeight)
+
+                    timelineScrollHint
+                        .frame(height: hintHeight)
+
+                    categoryActionStrip
+                        .frame(height: actionStripHeight)
+                }
+                .frame(minHeight: geometry.size.height, alignment: .top)
+                .padding(.horizontal, 8)
+                .padding(.bottom, 4)
+            }
+            .onAppear {
+                updateTimelineAvailableViewportWidth(geometry.size.width)
+            }
+            .onChange(of: geometry.size.width) { _, width in
+                updateTimelineAvailableViewportWidth(width)
+            }
+        }
+    }
+
+    private var videoPreview: some View {
+        RugbyVideoPreview()
+            .clipShape(RoundedRectangle(cornerRadius: 14))
+            .overlay(
+                RoundedRectangle(cornerRadius: 14)
+                    .stroke(Color.white.opacity(0.12), lineWidth: 1)
+            )
+            .shadow(color: .black.opacity(0.26), radius: 16, x: 0, y: 10)
+    }
+
+    private func playbackControls(maxSeconds: Int) -> some View {
+        ZStack {
+            HStack(spacing: 8) {
+                HStack(spacing: 3) {
+                    Text(timeText(min(playheadTimelineSecond, Double(maxSeconds))))
+                        .foregroundStyle(Color.timelineHome)
+                    Text("/ \(timeText(maxSeconds))")
+                        .foregroundStyle(.white.opacity(0.52))
+                }
+                .font(.system(size: 18, weight: .bold).monospacedDigit())
+
+                Spacer(minLength: 46)
+
+                HStack(spacing: 10) {
+                    timelineRoundControl(systemName: "arrow.uturn.backward") {
+                        nudgePlayhead(by: -10, maxSeconds: maxSeconds)
+                    }
+
+                    timelineRoundControl(systemName: "arrow.uturn.forward") {
+                        nudgePlayhead(by: 10, maxSeconds: maxSeconds)
+                    }
+                }
+            }
+
+            Button {
+                toggleTimelinePlayback(maxSeconds: maxSeconds)
+            } label: {
+                Image(systemName: isTimelinePlaying ? "pause.fill" : "play.fill")
+                    .font(.system(size: 24, weight: .black))
+                    .foregroundStyle(.white)
+                    .frame(width: 48, height: 48)
+                    .contentShape(Circle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(isTimelinePlaying ? "一時停止" : "再生")
+        }
+    }
+
+    private func timelineRoundControl(systemName: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: systemName)
+                .font(.system(size: 19, weight: .bold))
+                .foregroundStyle(.white.opacity(0.9))
+                .frame(width: 44, height: 44)
+                .background(Color.white.opacity(0.045))
+                .clipShape(Circle())
+                .overlay(Circle().stroke(Color.white.opacity(0.10), lineWidth: 1))
+        }
+        .buttonStyle(.plain)
+    }
+
+    private var timelineEditorPanel: some View {
+        let maxSeconds = timelinePresentation.maxSeconds
+        let contentWidth = timelineContentWidth(maxSeconds: maxSeconds)
+        let renderedViewportWidth = max(timelineRenderedViewportWidth, 1)
+        let renderedOffset = timelineRenderWindow.key.renderOffset >= 0
+            ? CGFloat(timelineRenderWindow.key.renderOffset)
+            : max(0, timelineRenderOffset)
+        let renderedFrame = timelineRenderedFrame(
+            renderOffset: renderedOffset,
+            viewportWidth: renderedViewportWidth,
+            contentWidth: contentWidth
+        )
+        let rowsHeight = CGFloat(trackDefinitions.count) * timelineTrackRowHeight
+
+        return ZStack(alignment: .topLeading) {
+            VStack(spacing: 0) {
+                timelineRulerRow(
+                    maxSeconds: maxSeconds,
+                    contentWidth: contentWidth,
+                    renderedFrame: renderedFrame,
+                    renderedViewportWidth: renderedViewportWidth
+                )
+                .frame(height: timelineRulerHeight)
+
+                Rectangle()
+                    .fill(Color.white.opacity(0.08))
+                    .frame(height: 1)
+
+                ScrollView(.vertical, showsIndicators: false) {
+                    timelineTracksRow(
+                        maxSeconds: maxSeconds,
+                        contentWidth: contentWidth,
+                        renderedFrame: renderedFrame,
+                        renderedViewportWidth: renderedViewportWidth,
+                        rowsHeight: rowsHeight
+                    )
+                    .frame(height: rowsHeight)
+                }
+            }
+
+            timelinePlayheadOverlay
+        }
+        .background(Color(red: 0.01, green: 0.05, blue: 0.09).opacity(0.92))
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .overlay(
+            RoundedRectangle(cornerRadius: 8)
+                .stroke(Color.white.opacity(0.10), lineWidth: 1)
+        )
+    }
+
+    private func timelineRulerRow(
+        maxSeconds: Int,
+        contentWidth: CGFloat,
+        renderedFrame: (origin: CGFloat, width: CGFloat),
+        renderedViewportWidth: CGFloat
+    ) -> some View {
+        HStack(spacing: 0) {
+            Color.clear
+                .frame(width: timelineTrackLabelWidth, height: timelineRulerHeight)
+                .overlay(alignment: .trailing) {
+                    Rectangle()
+                        .fill(Color.white.opacity(0.08))
+                        .frame(width: 1)
+                }
+
+            TimelineNativeScrollViewport(
+                contentWidth: contentWidth,
+                viewportHeight: timelineRulerHeight,
+                renderBucketWidth: timelineRenderBucketWidth,
+                hostOrigin: renderedFrame.origin,
+                hostWidth: renderedFrame.width,
+                scrollOffset: $timelineScrollOffset,
+                onViewportFrameChange: { _ in },
+                onRenderFrameChange: { renderOffset, viewportWidth in
+                    updateTimelineRenderWindow(
+                        renderOffset: renderOffset,
+                        viewportWidth: viewportWidth,
+                        maxSeconds: maxSeconds,
+                        contentWidth: contentWidth
+                    )
+                }
+            ) {
+                timelineScrollableRuler(
+                    ticks: timelineRenderWindow.ticks,
+                    maxSeconds: maxSeconds,
+                    contentWidth: contentWidth,
+                    contentOrigin: renderedFrame.origin,
+                    windowWidth: renderedFrame.width
+                )
+            }
+        }
+    }
+
+    private func timelineTracksRow(
+        maxSeconds: Int,
+        contentWidth: CGFloat,
+        renderedFrame: (origin: CGFloat, width: CGFloat),
+        renderedViewportWidth: CGFloat,
+        rowsHeight: CGFloat
+    ) -> some View {
+        HStack(spacing: 0) {
+            timelineTrackLabels(rowsHeight: rowsHeight)
+
+            TimelineNativeScrollViewport(
+                contentWidth: contentWidth,
+                viewportHeight: rowsHeight,
+                renderBucketWidth: timelineRenderBucketWidth,
+                hostOrigin: renderedFrame.origin,
+                hostWidth: renderedFrame.width,
+                scrollOffset: $timelineScrollOffset,
+                onViewportFrameChange: { frame in
+                    if timelineViewportFrame != frame {
+                        timelineViewportFrame = frame
+                    }
+                },
+                onRenderFrameChange: { renderOffset, viewportWidth in
+                    updateTimelineRenderWindow(
+                        renderOffset: renderOffset,
+                        viewportWidth: viewportWidth,
+                        maxSeconds: maxSeconds,
+                        contentWidth: contentWidth
+                    )
+                }
+            ) {
+                timelineScrollableTrackRows(
+                    maxSeconds: maxSeconds,
+                    contentWidth: contentWidth,
+                    renderWindow: timelineRenderWindow,
+                    contentOrigin: renderedFrame.origin,
+                    windowWidth: renderedFrame.width,
+                    rowsHeight: rowsHeight
+                )
+            }
+        }
+    }
+
+    private func timelineTrackLabels(rowsHeight: CGFloat) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            ForEach(trackDefinitions) { track in
+                HStack(spacing: 8) {
+                    Image(systemName: track.systemImage)
+                        .font(.title3.weight(.black))
+                        .foregroundStyle(track.color)
+                        .frame(width: 24)
+
+                    Text(trackDisplayTitle(track))
+                        .font(.caption.weight(.bold))
+                        .foregroundStyle(.white.opacity(0.64))
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.58)
+                }
+                .frame(width: timelineTrackLabelWidth, height: timelineTrackRowHeight, alignment: .leading)
+                .padding(.leading, 10)
+                .overlay(alignment: .top) {
+                    Rectangle()
+                        .fill(Color.white.opacity(0.055))
+                        .frame(height: 1)
+                }
+            }
+        }
+        .frame(width: timelineTrackLabelWidth, height: rowsHeight, alignment: .topLeading)
+        .background(Color.black.opacity(0.001))
+        .overlay(alignment: .trailing) {
+            Rectangle()
+                .fill(Color.white.opacity(0.08))
+                .frame(width: 1)
+        }
+    }
+
+    private func timelineScrollableTrackRows(
+        maxSeconds: Int,
+        contentWidth: CGFloat,
+        renderWindow: TimelineRenderWindow,
+        contentOrigin: CGFloat,
+        windowWidth: CGFloat,
+        rowsHeight: CGFloat
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            ForEach(trackDefinitions) { track in
+                timelineScrollableTrackRow(
+                    track,
+                    events: renderWindow.trackEvents[track.id, default: []],
+                    maxSeconds: maxSeconds,
+                    contentWidth: contentWidth,
+                    viewportWidth: windowWidth,
+                    renderOffset: CGFloat(renderWindow.key.renderOffset),
+                    contentOrigin: contentOrigin,
+                    windowWidth: windowWidth
+                )
+            }
+        }
+        .frame(width: windowWidth, height: rowsHeight, alignment: .topLeading)
+        .contentShape(Rectangle())
+        .simultaneousGesture(timelineZoomGesture)
+    }
+
+    private var timelinePlayheadOverlay: some View {
+        GeometryReader { proxy in
+            let scrollWidth = max(0, proxy.size.width - timelineTrackLabelWidth)
+            let x = timelineTrackLabelWidth + scrollWidth / 2
+
+            ZStack(alignment: .topLeading) {
+                Rectangle()
+                    .fill(Color.white.opacity(0.86))
+                    .frame(width: 1, height: max(0, proxy.size.height - timelineRulerHeight + 15))
+                    .offset(x: x, y: timelineRulerHeight - 15)
+
+                Circle()
+                    .fill(Color.white)
+                    .frame(width: 13, height: 13)
+                    .shadow(color: .black.opacity(0.32), radius: 5, y: 2)
+                    .offset(x: x - 6.5, y: timelineRulerHeight - 21)
+            }
+            .allowsHitTesting(false)
+        }
+    }
+
+    private var timelineScrollHint: some View {
+        HStack(spacing: 14) {
+            Image(systemName: "chevron.up.chevron.down")
+            Text("上下にスクロールして他のトラックを表示")
+                .lineLimit(1)
+                .minimumScaleFactor(0.75)
+            Image(systemName: "chevron.up.chevron.down")
+        }
+        .font(.caption.weight(.bold))
+        .foregroundStyle(.white.opacity(0.48))
+        .frame(maxWidth: .infinity)
+    }
+
+    private var categoryActionStrip: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                ForEach(TimelineEventCategory.allCases) { category in
+                    categoryActionTile(category)
+                }
+            }
+            .padding(.horizontal, 0)
+            .padding(.vertical, 2)
+        }
+    }
+
+    private func categoryActionTile(_ category: TimelineEventCategory) -> some View {
+        Button {
+            categoryPendingAddition = category
+            isAddEventSheetPresented = true
+        } label: {
+            VStack(spacing: 5) {
+                Image(systemName: category.systemImage)
+                    .font(.system(size: 24, weight: .black))
+                    .frame(height: 27)
+
+                Text(category.shortTitle)
+                    .font(.subheadline.weight(.black))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
+            }
+            .foregroundStyle(.white)
+            .frame(width: 64, height: 68)
+            .background(
+                LinearGradient(
+                    colors: [
+                        category.color.opacity(0.92),
+                        category.color.opacity(0.54)
+                    ],
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
+                )
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 8)
+                    .stroke(Color.white.opacity(0.16), lineWidth: 1)
+            )
+            .clipShape(RoundedRectangle(cornerRadius: 8))
+            .shadow(color: category.color.opacity(0.24), radius: 10, x: 0, y: 5)
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func trackDisplayTitle(_ track: TimelineTrackDefinition) -> String {
+        track.title
     }
 
     private var matchInfoCard: some View {
@@ -296,6 +729,19 @@ struct TimelineEditorView: View {
                     .font(.headline.weight(.black))
                     .foregroundStyle(.white)
                 Spacer()
+                Button {
+                    isAddEventSheetPresented = true
+                } label: {
+                    Label("追加", systemImage: "plus.circle.fill")
+                        .font(.caption.weight(.black))
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 10)
+                        .frame(height: 30)
+                        .background(Color.blue.opacity(0.72))
+                        .clipShape(Capsule())
+                }
+                .buttonStyle(.plain)
+
                 Text("\(timelinePresentation.visibleEvents.count)件")
                     .font(.caption.weight(.bold).monospacedDigit())
                     .foregroundStyle(.white.opacity(0.55))
@@ -384,7 +830,7 @@ struct TimelineEditorView: View {
     }
 
     private var timelineViewportHeight: CGFloat {
-        CGFloat(28 + 44 + trackDefinitions.count * 44 + 12)
+        timelineRulerHeight + CGFloat(trackDefinitions.count) * timelineTrackRowHeight
     }
 
     private var timelineFixedLabels: some View {
@@ -475,15 +921,49 @@ struct TimelineEditorView: View {
         contentOrigin: CGFloat,
         windowWidth: CGFloat
     ) -> some View {
-        ZStack(alignment: .topLeading) {
-            ForEach(ticks, id: \.self) { second in
-                VStack(spacing: 4) {
+        let majorTicks = ticks.isEmpty ? visibleTimelineTicks(
+            maxSeconds: maxSeconds,
+            contentWidth: contentWidth,
+            viewportWidth: windowWidth,
+            scrollOffset: contentOrigin
+        ) : ticks
+        let majorSet = Set(majorTicks)
+        let minorTicks = visibleTimelineMinorTicks(
+            maxSeconds: maxSeconds,
+            contentWidth: contentWidth,
+            viewportWidth: windowWidth,
+            scrollOffset: contentOrigin
+        ).filter { !majorSet.contains($0) }
+
+        return ZStack(alignment: .topLeading) {
+            Rectangle()
+                .fill(Color.white.opacity(0.055))
+                .frame(width: max(34, windowWidth), height: 1)
+                .offset(y: timelineRulerHeight - 1)
+
+            timelineNonEditableZones(
+                maxSeconds: maxSeconds,
+                contentWidth: contentWidth,
+                contentOrigin: contentOrigin,
+                windowWidth: windowWidth,
+                height: timelineRulerHeight
+            )
+
+            ForEach(minorTicks, id: \.self) { second in
+                Rectangle()
+                    .fill(Color.white.opacity(0.16))
+                    .frame(width: 1, height: 13)
+                    .offset(x: xOffset(for: second, maxSeconds: maxSeconds, contentWidth: contentWidth) - contentOrigin, y: 31)
+            }
+
+            ForEach(majorTicks, id: \.self) { second in
+                VStack(spacing: 6) {
                     Text(timelineRulerText(for: second))
                         .font(.caption2.weight(.bold).monospacedDigit())
                         .foregroundStyle(.white.opacity(0.52))
                     Rectangle()
-                        .fill(Color.white.opacity(0.18))
-                        .frame(width: 1, height: 8)
+                        .fill(Color.white.opacity(0.24))
+                        .frame(width: 1, height: 17)
                 }
                 .offset(x: xOffset(for: second, maxSeconds: maxSeconds, contentWidth: contentWidth) - contentOrigin)
             }
@@ -496,7 +976,7 @@ struct TimelineEditorView: View {
                     .offset(x: xOffset(for: halfTimelineOffset(for: 1), maxSeconds: maxSeconds, contentWidth: contentWidth) - contentOrigin + 4, y: 0)
             }
         }
-        .frame(width: windowWidth, height: 28, alignment: .topLeading)
+        .frame(width: windowWidth, height: timelineRulerHeight, alignment: .topLeading)
         .clipped()
     }
 
@@ -561,6 +1041,14 @@ struct TimelineEditorView: View {
                 selectedTimelineEventID = nil
             }
 
+            timelineNonEditableZones(
+                maxSeconds: maxSeconds,
+                contentWidth: contentWidth,
+                contentOrigin: contentOrigin,
+                windowWidth: windowWidth,
+                height: timelineTrackRowHeight
+            )
+
             if selectedScope == .all {
                 halfDivider(maxSeconds: maxSeconds, contentWidth: contentWidth, scrollOffset: contentOrigin)
             }
@@ -572,15 +1060,18 @@ struct TimelineEditorView: View {
                 viewportWidth: windowWidth,
                 renderOffset: contentOrigin,
                 positionOffset: contentOrigin,
+                editableStartX: xOffset(for: 0, maxSeconds: maxSeconds, contentWidth: contentWidth),
+                editableEndX: xOffset(for: maxSeconds, maxSeconds: maxSeconds, contentWidth: contentWidth),
                 color: track.color,
                 selectedEventID: selectedTimelineEventID,
                 resizeSensitivity: resizeSensitivity,
                 resizeAutoScrollTranslation: timelineAutoScrollAccumulatedPixels,
                 onTap: { item in
                     if selectedTimelineEventID == item.id {
-                        selectedTimelineEventID = nil
+                        selectedEvent = item.event
                     } else {
                         selectedTimelineEventID = item.id
+                        scrollToTimelineSecond(item.startSeconds, maxSeconds: maxSeconds)
                     }
                 },
                 onDragChanged: { _, translation, location in
@@ -636,6 +1127,14 @@ struct TimelineEditorView: View {
                 }
             )
             .equatable()
+
+            timelineNonEditableZones(
+                maxSeconds: maxSeconds,
+                contentWidth: contentWidth,
+                contentOrigin: contentOrigin,
+                windowWidth: windowWidth,
+                height: timelineTrackRowHeight
+            )
         }
         .frame(width: windowWidth, height: 44, alignment: .leading)
         .clipped()
@@ -645,9 +1144,71 @@ struct TimelineEditorView: View {
         windowWidth: CGFloat,
         opacity: Double
     ) -> some View {
-        RoundedRectangle(cornerRadius: 7)
+        Rectangle()
             .fill(Color.white.opacity(opacity))
-            .frame(width: max(34, windowWidth), height: 34)
+            .frame(width: max(34, windowWidth), height: timelineTrackRowHeight)
+            .overlay(alignment: .top) {
+                Rectangle()
+                    .fill(Color.white.opacity(0.055))
+                    .frame(height: 1)
+            }
+    }
+
+    private func timelineNonEditableZones(
+        maxSeconds: Int,
+        contentWidth: CGFloat,
+        contentOrigin: CGFloat,
+        windowWidth: CGFloat,
+        height: CGFloat
+    ) -> some View {
+        let editStartX = xOffset(for: 0, maxSeconds: maxSeconds, contentWidth: contentWidth) - contentOrigin
+        let editEndX = xOffset(for: maxSeconds, maxSeconds: maxSeconds, contentWidth: contentWidth) - contentOrigin
+        let leftWidth = max(0, min(editStartX, windowWidth))
+        let rightX = max(0, min(editEndX, windowWidth))
+        let rightWidth = max(0, windowWidth - rightX)
+
+        return ZStack(alignment: .topLeading) {
+            nonEditableTimelineZone(width: leftWidth, height: height)
+                .opacity(leftWidth > 0 ? 1 : 0)
+
+            nonEditableTimelineZone(width: rightWidth, height: height)
+                .offset(x: rightX)
+                .opacity(rightWidth > 0 ? 1 : 0)
+
+            timelineEditBoundaryLine(height: height)
+                .offset(x: editStartX)
+                .opacity(editStartX >= 0 && editStartX <= windowWidth ? 1 : 0)
+
+            timelineEditBoundaryLine(height: height)
+                .offset(x: editEndX)
+                .opacity(editEndX >= 0 && editEndX <= windowWidth ? 1 : 0)
+        }
+        .frame(width: windowWidth, height: height, alignment: .topLeading)
+        .allowsHitTesting(false)
+    }
+
+    private func nonEditableTimelineZone(width: CGFloat, height: CGFloat) -> some View {
+        ZStack {
+            Rectangle()
+                .fill(Color.black.opacity(0.36))
+            TimelineDisabledPattern()
+                .opacity(0.9)
+            Rectangle()
+                .fill(Color(red: 0.01, green: 0.04, blue: 0.07).opacity(0.42))
+        }
+        .frame(width: max(0, width), height: height)
+    }
+
+    private func timelineEditBoundaryLine(height: CGFloat) -> some View {
+        Rectangle()
+            .fill(Color.white.opacity(0.44))
+            .frame(width: 1.5, height: height)
+            .overlay(alignment: .leading) {
+                Rectangle()
+                    .fill(Color.timelineHome.opacity(0.42))
+                    .frame(width: 3, height: height)
+                    .offset(x: -1.5)
+            }
     }
 
     private func clampedTimelineScrollOffset(_ offset: CGFloat, contentWidth: CGFloat, viewportWidth: CGFloat) -> CGFloat {
@@ -842,6 +1403,7 @@ struct TimelineEditorView: View {
             contentWidth: contentWidth,
             presentation: timelinePresentation
         )
+        positionInitialPlayheadIfNeeded(maxSeconds: maxSeconds, contentWidth: contentWidth)
     }
 
     private func refreshTimelineRenderWindow(for presentation: TimelinePresentationState, version: Int) {
@@ -869,6 +1431,7 @@ struct TimelineEditorView: View {
             contentWidth: contentWidth,
             presentation: presentation
         )
+        positionInitialPlayheadIfNeeded(maxSeconds: maxSeconds, contentWidth: contentWidth)
     }
 
     private func makeTimelineRenderWindow(
@@ -918,8 +1481,14 @@ struct TimelineEditorView: View {
         let bufferPixels = timelineRenderPadding + timelineRenderBucketWidth
         let bufferSeconds = max(60, Int((bufferPixels / pointsPerSecond).rounded(.up)))
         let trackViewportWidth = viewportWidth
-        let visibleStart = Int((scrollOffset / pointsPerSecond).rounded(.down)) - bufferSeconds
-        let visibleEnd = Int(((scrollOffset + trackViewportWidth) / pointsPerSecond).rounded(.up)) + bufferSeconds
+        let visibleStart = Int(
+            timelineSecond(forContentX: scrollOffset, maxSeconds: maxSeconds, contentWidth: contentWidth)
+                .rounded(.down)
+        ) - bufferSeconds
+        let visibleEnd = Int(
+            timelineSecond(forContentX: scrollOffset + trackViewportWidth, maxSeconds: maxSeconds, contentWidth: contentWidth)
+                .rounded(.up)
+        ) + bufferSeconds
 
         var visibleEvents = Array(trackEvents.lazy.filter { event in
             event.endSeconds >= visibleStart && event.startSeconds <= visibleEnd
@@ -967,6 +1536,95 @@ struct TimelineEditorView: View {
         saveErrorMessage = nil
         rebuildTimelinePresentation()
         scheduleTimelineSave()
+    }
+
+    private func addTimelineEvent(from draft: TimelineEventDraft) {
+        let event = makeStatEvent(from: draft)
+        modelContext.insert(event)
+        events.append(event)
+
+        do {
+            try modelContext.save()
+            saveErrorMessage = nil
+            selectedTimelineEventID = event.id
+            if let scopedHalf = selectedScope.half, scopedHalf != event.half {
+                selectedScope = event.half == 0 ? .first : .second
+            } else {
+                rebuildTimelinePresentation()
+            }
+        } catch {
+            modelContext.delete(event)
+            events.removeAll { $0.id == event.id }
+            rebuildTimelinePresentation()
+            saveErrorMessage = "イベントを追加できませんでした。もう一度試してください。"
+        }
+    }
+
+    private func deleteTimelineEvent(_ event: StatEvent) {
+        pendingTimelineSaveTask?.cancel()
+        selectedEvent = nil
+        isDeleteConfirmationPresented = false
+        eventPendingDeletion = nil
+        if selectedTimelineEventID == event.id {
+            selectedTimelineEventID = nil
+        }
+
+        modelContext.delete(event)
+        events.removeAll { $0.id == event.id }
+
+        do {
+            try modelContext.save()
+            saveErrorMessage = nil
+            rebuildTimelinePresentation()
+        } catch {
+            reloadData()
+            saveErrorMessage = "イベントを削除できませんでした。もう一度試してください。"
+        }
+    }
+
+    private func requestDeleteTimelineEvent(_ event: StatEvent) {
+        eventPendingDeletion = TimelineDeletionCandidate(
+            id: event.id,
+            title: eventTitle(for: event)
+        )
+        isDeleteConfirmationPresented = true
+    }
+
+    private func makeStatEvent(from draft: TimelineEventDraft) -> StatEvent {
+        let teamID: UUID?
+        switch draft.category {
+        case .homePossession:
+            teamID = match.homeTeamID
+        case .awayPossession:
+            teamID = match.awayTeamID
+        case .bip:
+            teamID = nil
+        default:
+            teamID = draft.teamSide == .home ? match.homeTeamID : match.awayTeamID
+        }
+
+        let outcome: String
+        switch draft.category {
+        case .homePossession, .awayPossession:
+            outcome = "own"
+        case .bip:
+            outcome = "none"
+        case .tryScore:
+            outcome = "success"
+        default:
+            outcome = draft.isSuccessful ? "success" : "fail"
+        }
+
+        return StatEvent(
+            matchID: match.id,
+            teamID: teamID,
+            playerID: draft.category.allowsPlayerSelection ? draft.playerID : nil,
+            category: draft.category.storageCategory,
+            outcome: outcome,
+            seconds: draft.category.isDuration ? max(1, draft.durationSeconds) : max(0, draft.seconds),
+            startSeconds: draft.category.isDuration ? max(0, draft.seconds) : nil,
+            half: draft.half
+        )
     }
 
     private func resizeTranslation(_ translation: CGFloat) -> CGFloat {
@@ -1146,6 +1804,114 @@ struct TimelineEditorView: View {
             saveErrorMessage = "変更を保存できませんでした。もう一度試してください。"
         }
     }
+
+    private func toggleTimelinePlayback(maxSeconds: Int) {
+        if isTimelinePlaying {
+            stopTimelinePlayback()
+        } else {
+            startTimelinePlayback(maxSeconds: maxSeconds)
+        }
+    }
+
+    private func startTimelinePlayback(maxSeconds: Int) {
+        timelinePlaybackTask?.cancel()
+        isTimelinePlaying = true
+        let playbackStartSecond = min(playheadTimelineSecond, Double(maxSeconds))
+        let playbackStartDate = Date()
+        timelinePlaybackTask = Task { @MainActor in
+            while !Task.isCancelled {
+                let currentMaxSeconds = timelinePresentation.maxSeconds
+                let elapsedSeconds = Date().timeIntervalSince(playbackStartDate)
+                let currentSecond = min(playbackStartSecond + elapsedSeconds, Double(currentMaxSeconds))
+                scrollToTimelineSecond(currentSecond, maxSeconds: currentMaxSeconds)
+
+                guard currentSecond < Double(currentMaxSeconds) else {
+                    stopTimelinePlayback()
+                    break
+                }
+                try? await Task.sleep(for: .milliseconds(16))
+            }
+        }
+    }
+
+    private func stopTimelinePlayback() {
+        timelinePlaybackTask?.cancel()
+        timelinePlaybackTask = nil
+        isTimelinePlaying = false
+    }
+
+    private func updateTimelineAvailableViewportWidth(_ width: CGFloat) {
+        let viewportWidth = max(220, width - 16 - timelineTrackLabelWidth)
+        guard abs(timelineAvailableViewportWidth - viewportWidth) > 0.5 else { return }
+        timelineAvailableViewportWidth = viewportWidth
+        isTimelineOverviewMode = true
+        timelineScrollOffset = 0
+        playheadTimelineSecond = 0
+        refreshTimelineRenderWindow(
+            for: timelinePresentation,
+            version: timelinePresentationVersion
+        )
+    }
+
+    private func nudgePlayhead(by delta: Double, maxSeconds: Int) {
+        stopTimelinePlayback()
+        scrollToTimelineSecond(playheadTimelineSecond + delta, maxSeconds: maxSeconds)
+    }
+
+    private func scrollToTimelineSecond(_ second: Int, maxSeconds: Int? = nil) {
+        scrollToTimelineSecond(Double(second), maxSeconds: maxSeconds)
+    }
+
+    private func scrollToTimelineSecond(_ second: Double, maxSeconds: Int? = nil) {
+        let maxSeconds = maxSeconds ?? timelinePresentation.maxSeconds
+        let clampedSecond = min(max(0, second), Double(maxSeconds))
+        let contentWidth = timelineContentWidth(maxSeconds: maxSeconds)
+        let viewportWidth = max(timelineRenderedViewportWidth, timelineViewportFrame.width)
+        let targetX = xOffset(for: clampedSecond, maxSeconds: maxSeconds, contentWidth: contentWidth)
+
+        playheadTimelineSecond = clampedSecond
+        guard viewportWidth > 0 else { return }
+
+        updateTimelineScrollOffsetFromPlayhead(
+            clampedTimelineScrollOffset(
+                targetX - viewportWidth / 2,
+                contentWidth: contentWidth,
+                viewportWidth: viewportWidth
+            )
+        )
+    }
+
+    private func updateTimelineScrollOffsetFromPlayhead(_ offset: CGFloat) {
+        isTimelineScrollSyncSuppressed = true
+        timelineScrollOffset = offset
+        Task { @MainActor in
+            await Task.yield()
+            isTimelineScrollSyncSuppressed = false
+        }
+    }
+
+    private func syncPlayheadWithScroll() {
+        let maxSeconds = timelinePresentation.maxSeconds
+        let contentWidth = timelineContentWidth(maxSeconds: maxSeconds)
+        let viewportWidth = max(timelineRenderedViewportWidth, timelineViewportFrame.width)
+        guard viewportWidth > 0 else { return }
+
+        let markerX = min(contentWidth, max(0, timelineScrollOffset + viewportWidth / 2))
+        let second = Double(timelineSecond(forContentX: markerX, maxSeconds: maxSeconds, contentWidth: contentWidth))
+        playheadTimelineSecond = min(max(0, second), Double(maxSeconds))
+    }
+
+    private func positionInitialPlayheadIfNeeded(maxSeconds: Int, contentWidth: CGFloat) {
+        guard !didSetInitialPlayheadPosition else { return }
+        let viewportWidth = max(timelineRenderedViewportWidth, timelineViewportFrame.width)
+        guard viewportWidth > 0 else { return }
+
+        didSetInitialPlayheadPosition = true
+        isTimelineOverviewMode = true
+        playheadTimelineSecond = 0
+        timelineScrollOffset = 0
+    }
+
     private var pointsPerSecond: CGFloat {
         2.4 * timelineZoom
     }
@@ -1157,6 +1923,7 @@ struct TimelineEditorView: View {
     private var timelineZoomGesture: some Gesture {
         MagnificationGesture()
             .onChanged { value in
+                isTimelineOverviewMode = false
                 timelineZoom = clampedTimelineZoom(baseTimelineZoom * value)
             }
             .onEnded { value in
@@ -1165,6 +1932,7 @@ struct TimelineEditorView: View {
     }
 
     private func setTimelineZoom(_ zoom: CGFloat) {
+        isTimelineOverviewMode = zoom <= minimumTimelineZoom
         timelineZoom = clampedTimelineZoom(zoom)
         baseTimelineZoom = timelineZoom
     }
@@ -1226,7 +1994,32 @@ struct TimelineEditorView: View {
     }
 
     private func timelineContentWidth(maxSeconds: Int) -> CGFloat {
-        max(240, CGFloat(maxSeconds) * pointsPerSecond)
+        let viewportWidth = timelineScrollViewportWidth()
+        let playableWidth = isTimelineOverviewMode
+            ? viewportWidth
+            : max(viewportWidth, CGFloat(maxSeconds) * pointsPerSecond)
+        return playableWidth + viewportWidth
+    }
+
+    private func timelineScrollViewportWidth() -> CGFloat {
+        max(
+            1,
+            max(timelineRenderedViewportWidth, max(timelineViewportFrame.width, max(220, timelineAvailableViewportWidth)))
+        )
+    }
+
+    private func timelinePlayableContentWidth(maxSeconds: Int, contentWidth: CGFloat) -> CGFloat {
+        max(1, contentWidth - timelineScrollViewportWidth())
+    }
+
+    private func timelinePlayheadContentInset() -> CGFloat {
+        timelineScrollViewportWidth() / 2
+    }
+
+    private func timelineSecond(forContentX contentX: CGFloat, maxSeconds: Int, contentWidth: CGFloat) -> CGFloat {
+        let playableWidth = timelinePlayableContentWidth(maxSeconds: maxSeconds, contentWidth: contentWidth)
+        let second = (contentX - timelinePlayheadContentInset()) / playableWidth * CGFloat(max(maxSeconds, 1))
+        return min(CGFloat(maxSeconds), max(0, second))
     }
 
     private func timelineTicks(maxSeconds: Int) -> [Int] {
@@ -1248,8 +2041,39 @@ struct TimelineEditorView: View {
         let pointsPerSecond = max(timelinePointsPerSecond(maxSeconds: maxSeconds, contentWidth: contentWidth), 0.1)
         let bufferPixels = timelineRenderPadding + timelineRenderBucketWidth
         let bufferSeconds = max(interval, Int((bufferPixels / pointsPerSecond).rounded(.up)))
-        let visibleStart = max(0, Int((scrollOffset / pointsPerSecond).rounded(.down)) - bufferSeconds)
-        let visibleEnd = min(maxSeconds, Int(((scrollOffset + viewportWidth) / pointsPerSecond).rounded(.up)) + bufferSeconds)
+        let visibleStart = max(
+            0,
+            Int(timelineSecond(forContentX: scrollOffset, maxSeconds: maxSeconds, contentWidth: contentWidth).rounded(.down)) - bufferSeconds
+        )
+        let visibleEnd = min(
+            maxSeconds,
+            Int(timelineSecond(forContentX: scrollOffset + viewportWidth, maxSeconds: maxSeconds, contentWidth: contentWidth).rounded(.up)) + bufferSeconds
+        )
+        let firstTick = max(0, (visibleStart / interval) * interval)
+
+        return stride(from: firstTick, through: visibleEnd, by: interval).map { $0 }
+    }
+
+    private func visibleTimelineMinorTicks(
+        maxSeconds: Int,
+        contentWidth: CGFloat,
+        viewportWidth: CGFloat,
+        scrollOffset: CGFloat
+    ) -> [Int] {
+        guard viewportWidth > 0 else { return [] }
+
+        let interval = max(30, timelineTickInterval(maxSeconds: maxSeconds) / 5)
+        let pointsPerSecond = max(timelinePointsPerSecond(maxSeconds: maxSeconds, contentWidth: contentWidth), 0.1)
+        let bufferPixels = timelineRenderPadding + timelineRenderBucketWidth
+        let bufferSeconds = max(interval, Int((bufferPixels / pointsPerSecond).rounded(.up)))
+        let visibleStart = max(
+            0,
+            Int(timelineSecond(forContentX: scrollOffset, maxSeconds: maxSeconds, contentWidth: contentWidth).rounded(.down)) - bufferSeconds
+        )
+        let visibleEnd = min(
+            maxSeconds,
+            Int(timelineSecond(forContentX: scrollOffset + viewportWidth, maxSeconds: maxSeconds, contentWidth: contentWidth).rounded(.up)) + bufferSeconds
+        )
         let firstTick = max(0, (visibleStart / interval) * interval)
 
         return stride(from: firstTick, through: visibleEnd, by: interval).map { $0 }
@@ -1267,18 +2091,24 @@ struct TimelineEditorView: View {
     private func timelineTickInterval(maxSeconds: Int) -> Int {
         let contentWidth = timelineContentWidth(maxSeconds: maxSeconds)
         let effectivePointsPerSecond = timelinePointsPerSecond(maxSeconds: maxSeconds, contentWidth: contentWidth)
-        let targetSeconds = 130 / max(effectivePointsPerSecond, 0.1)
+        let targetSeconds = 70 / max(effectivePointsPerSecond, 0.1)
         let candidates = [10, 15, 30, 60, 120, 180, 300, 600]
         return candidates.first { Double($0) >= Double(targetSeconds) } ?? 600
     }
 
     private func timelinePointsPerSecond(maxSeconds: Int, contentWidth: CGFloat) -> CGFloat {
-        contentWidth / CGFloat(max(maxSeconds, 1))
+        timelinePlayableContentWidth(maxSeconds: maxSeconds, contentWidth: contentWidth) / CGFloat(max(maxSeconds, 1))
     }
 
 
     private func xOffset(for seconds: Int, maxSeconds: Int, contentWidth: CGFloat) -> CGFloat {
-        CGFloat(max(0, seconds)) / CGFloat(max(maxSeconds, 1)) * contentWidth
+        xOffset(for: Double(seconds), maxSeconds: maxSeconds, contentWidth: contentWidth)
+    }
+
+    private func xOffset(for seconds: Double, maxSeconds: Int, contentWidth: CGFloat) -> CGFloat {
+        timelinePlayheadContentInset()
+            + CGFloat(min(max(0, seconds), Double(maxSeconds))) / CGFloat(max(maxSeconds, 1))
+            * timelinePlayableContentWidth(maxSeconds: maxSeconds, contentWidth: contentWidth)
     }
 
     private var loadingView: some View {
@@ -1444,6 +2274,13 @@ struct TimelineEditorView: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .contextMenu {
+            Button(role: .destructive) {
+                requestDeleteTimelineEvent(event)
+            } label: {
+                Label("削除", systemImage: "trash")
+            }
+        }
     }
 
     @MainActor
@@ -1490,7 +2327,10 @@ struct TimelineEditorView: View {
         } else {
             rawMaxSeconds = halfDurations[0, default: 60] + halfDurations[1, default: 60]
         }
-        let roundedMaxSeconds = Int(ceil(Double(max(rawMaxSeconds, 60)) / 60.0)) * 60
+        let baselineSeconds = selectedScope == .all
+            ? defaultHalfTimelineSeconds * 2
+            : defaultHalfTimelineSeconds
+        let roundedMaxSeconds = Int(ceil(Double(max(rawMaxSeconds, baselineSeconds)) / 60.0)) * 60
         let timelineStartSeconds = Dictionary(uniqueKeysWithValues: visibleEvents.map { event in
             (
                 event.id,
@@ -1561,12 +2401,16 @@ struct TimelineEditorView: View {
             events = try modelContext.fetch(eventDescriptor)
             players = try modelContext.fetch(playerDescriptor)
             teams = try modelContext.fetch(FetchDescriptor<Team>())
+            setTimelineZoom(minimumTimelineZoom)
+            didSetInitialPlayheadPosition = false
             rebuildTimelinePresentation()
             didLoad = true
         } catch {
             events = []
             players = []
             teams = []
+            setTimelineZoom(minimumTimelineZoom)
+            didSetInitialPlayheadPosition = false
             rebuildTimelinePresentation()
             didLoad = true
         }
@@ -1638,7 +2482,7 @@ struct TimelineEditorView: View {
             for: halfEvents,
             includesBIP: true
         )
-        return max(maxPointSeconds, maxStoredPossessionEnd, homeAwayDuration, bipDuration, 60)
+        return max(maxPointSeconds, maxStoredPossessionEnd, homeAwayDuration, bipDuration, defaultHalfTimelineSeconds)
     }
 
     private func calculatedTimelineStartSecond(
@@ -1737,6 +2581,15 @@ struct TimelineEditorView: View {
         teams.first { $0.id == id }?.name ?? "チーム未設定"
     }
 
+    private func players(forTeamID teamID: UUID) -> [Player] {
+        players
+            .filter { $0.teamID == teamID }
+            .sorted { lhs, rhs in
+                if lhs.number != rhs.number { return lhs.number < rhs.number }
+                return (lhs.name ?? "") < (rhs.name ?? "")
+            }
+    }
+
     private func playerName(for playerID: UUID?, in lookup: [UUID: Player], fallback: String) -> String {
         guard let playerID, let player = lookup[playerID] else {
             return fallback
@@ -1753,6 +2606,14 @@ struct TimelineEditorView: View {
 
     private func timeText(_ seconds: Int) -> String {
         String(format: "%02d:%02d", seconds / 60, seconds % 60)
+    }
+
+    private func timeText(_ seconds: Double) -> String {
+        let totalTenths = Int((max(0, seconds) * 10).rounded())
+        let minutes = totalTenths / 600
+        let wholeSeconds = (totalTenths / 10) % 60
+        let tenths = totalTenths % 10
+        return String(format: "%02d:%02d.%d", minutes, wholeSeconds, tenths)
     }
 
     private func teamLabel(for event: StatEvent) -> String {
@@ -1864,6 +2725,140 @@ struct TimelineEditorView: View {
 
 }
 
+private struct RugbyVideoPreview: View {
+    private let players: [PreviewPlayerMarker] = [
+        PreviewPlayerMarker(id: 1, x: 0.16, y: 0.72, isHome: true),
+        PreviewPlayerMarker(id: 2, x: 0.21, y: 0.66, isHome: true),
+        PreviewPlayerMarker(id: 3, x: 0.25, y: 0.58, isHome: true),
+        PreviewPlayerMarker(id: 4, x: 0.31, y: 0.51, isHome: true),
+        PreviewPlayerMarker(id: 5, x: 0.36, y: 0.44, isHome: true),
+        PreviewPlayerMarker(id: 6, x: 0.40, y: 0.35, isHome: true),
+        PreviewPlayerMarker(id: 7, x: 0.26, y: 0.79, isHome: true),
+        PreviewPlayerMarker(id: 8, x: 0.42, y: 0.58, isHome: true),
+        PreviewPlayerMarker(id: 9, x: 0.64, y: 0.24, isHome: false),
+        PreviewPlayerMarker(id: 10, x: 0.70, y: 0.31, isHome: false),
+        PreviewPlayerMarker(id: 11, x: 0.76, y: 0.38, isHome: false),
+        PreviewPlayerMarker(id: 12, x: 0.82, y: 0.47, isHome: false),
+        PreviewPlayerMarker(id: 13, x: 0.88, y: 0.56, isHome: false),
+        PreviewPlayerMarker(id: 14, x: 0.73, y: 0.61, isHome: false),
+        PreviewPlayerMarker(id: 15, x: 0.56, y: 0.42, isHome: false),
+        PreviewPlayerMarker(id: 16, x: 0.52, y: 0.28, isHome: false),
+        PreviewPlayerMarker(id: 17, x: 0.48, y: 0.33, isHome: false)
+    ]
+
+    var body: some View {
+        GeometryReader { proxy in
+            let size = proxy.size
+
+            ZStack {
+                LinearGradient(
+                    colors: [
+                        Color(red: 0.20, green: 0.48, blue: 0.13),
+                        Color(red: 0.31, green: 0.62, blue: 0.20),
+                        Color(red: 0.17, green: 0.43, blue: 0.12)
+                    ],
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
+                )
+
+                VStack(spacing: 0) {
+                    stadiumBand
+                        .frame(height: size.height * 0.18)
+                    Spacer(minLength: 0)
+                }
+
+                pitchLines(size: size)
+                    .stroke(Color.white.opacity(0.34), lineWidth: 1)
+
+                ForEach(players) { marker in
+                    previewPlayer(isHome: marker.isHome)
+                        .position(x: marker.x * size.width, y: marker.y * size.height)
+                }
+
+                Rectangle()
+                    .fill(
+                        LinearGradient(
+                            colors: [.black.opacity(0.18), .clear, .black.opacity(0.16)],
+                            startPoint: .top,
+                            endPoint: .bottom
+                        )
+                    )
+            }
+        }
+    }
+
+    private var stadiumBand: some View {
+        ZStack(alignment: .bottom) {
+            LinearGradient(
+                colors: [
+                    Color(red: 0.07, green: 0.09, blue: 0.13),
+                    Color(red: 0.85, green: 0.17, blue: 0.08),
+                    Color(red: 0.05, green: 0.06, blue: 0.10)
+                ],
+                startPoint: .leading,
+                endPoint: .trailing
+            )
+
+            HStack(spacing: 7) {
+                ForEach(0..<12, id: \.self) { index in
+                    RoundedRectangle(cornerRadius: 1)
+                        .fill(index.isMultiple(of: 3) ? Color.white.opacity(0.88) : Color.black.opacity(0.48))
+                        .frame(width: index.isMultiple(of: 4) ? 34 : 24, height: 9)
+                }
+            }
+            .padding(.bottom, 4)
+        }
+    }
+
+    private func pitchLines(size: CGSize) -> Path {
+        var path = Path()
+        let width = size.width
+        let height = size.height
+        let top = height * 0.18
+        let bottom = height * 0.95
+
+        path.move(to: CGPoint(x: width * 0.12, y: top))
+        path.addLine(to: CGPoint(x: width * 0.03, y: bottom))
+        path.move(to: CGPoint(x: width * 0.94, y: top))
+        path.addLine(to: CGPoint(x: width * 0.98, y: bottom))
+        path.move(to: CGPoint(x: width * 0.50, y: top))
+        path.addLine(to: CGPoint(x: width * 0.50, y: bottom))
+        path.move(to: CGPoint(x: width * 0.28, y: top))
+        path.addLine(to: CGPoint(x: width * 0.20, y: bottom))
+        path.move(to: CGPoint(x: width * 0.73, y: top))
+        path.addLine(to: CGPoint(x: width * 0.80, y: bottom))
+        path.move(to: CGPoint(x: width * 0.04, y: height * 0.52))
+        path.addLine(to: CGPoint(x: width * 0.98, y: height * 0.48))
+
+        return path
+    }
+
+    private func previewPlayer(isHome: Bool) -> some View {
+        VStack(spacing: 1) {
+            Circle()
+                .fill(Color(red: 0.90, green: 0.70, blue: 0.54))
+                .frame(width: 4, height: 4)
+            RoundedRectangle(cornerRadius: 2)
+                .fill(isHome ? Color(red: 0.82, green: 0.05, blue: 0.07) : Color.white)
+                .frame(width: 10, height: 12)
+                .overlay(alignment: .bottom) {
+                    Rectangle()
+                        .fill(isHome ? Color.white.opacity(0.88) : Color(red: 0.05, green: 0.14, blue: 0.36))
+                        .frame(height: 3)
+                }
+        }
+        .frame(width: 15, height: 20)
+        .shadow(color: .black.opacity(0.32), radius: 2, x: 0, y: 1)
+    }
+}
+
+private struct PreviewPlayerMarker: Identifiable {
+    let id: Int
+    let x: CGFloat
+    let y: CGFloat
+    let isHome: Bool
+}
+
 private struct TimelineNativeScrollViewport<Content: View>: UIViewRepresentable {
     let contentWidth: CGFloat
     let viewportHeight: CGFloat
@@ -1906,9 +2901,10 @@ private struct TimelineNativeScrollViewport<Content: View>: UIViewRepresentable 
         scrollView.delegate = context.coordinator
         scrollView.backgroundColor = .clear
         scrollView.clipsToBounds = true
-        scrollView.showsHorizontalScrollIndicator = true
+        scrollView.showsHorizontalScrollIndicator = false
         scrollView.showsVerticalScrollIndicator = false
-        scrollView.alwaysBounceHorizontal = true
+        scrollView.bounces = false
+        scrollView.alwaysBounceHorizontal = false
         scrollView.alwaysBounceVertical = false
         scrollView.isDirectionalLockEnabled = true
         scrollView.delaysContentTouches = false
@@ -1981,23 +2977,28 @@ private struct TimelineNativeScrollViewport<Content: View>: UIViewRepresentable 
         }
 
         func scrollViewDidScroll(_ scrollView: UIScrollView) {
+            let clampedOffset = clampedContentOffset(in: scrollView)
+            if abs(scrollView.contentOffset.x - clampedOffset) > 0.5 {
+                scrollView.setContentOffset(CGPoint(x: clampedOffset, y: scrollView.contentOffset.y), animated: false)
+            }
+            parent.scrollOffset = clampedOffset
             reportRenderWindow(scrollView, force: false)
         }
 
         func scrollViewDidEndDragging(_ scrollView: UIScrollView, willDecelerate decelerate: Bool) {
-            parent.scrollOffset = scrollView.contentOffset.x
+            parent.scrollOffset = clampedContentOffset(in: scrollView)
             if !decelerate {
                 reportRenderWindow(scrollView, force: true)
             }
         }
 
         func scrollViewDidEndDecelerating(_ scrollView: UIScrollView) {
-            parent.scrollOffset = scrollView.contentOffset.x
+            parent.scrollOffset = clampedContentOffset(in: scrollView)
             reportRenderWindow(scrollView, force: true)
         }
 
         func scrollViewDidEndScrollingAnimation(_ scrollView: UIScrollView) {
-            parent.scrollOffset = scrollView.contentOffset.x
+            parent.scrollOffset = clampedContentOffset(in: scrollView)
             reportRenderWindow(scrollView, force: true)
         }
 
@@ -2022,6 +3023,26 @@ private struct TimelineNativeScrollViewport<Content: View>: UIViewRepresentable 
 
         private func bucketedOffset(_ offset: CGFloat) -> CGFloat {
             (max(0, offset) / parent.renderBucketWidth).rounded(.down) * parent.renderBucketWidth
+        }
+
+        private func clampedContentOffset(in scrollView: UIScrollView) -> CGFloat {
+            min(max(0, scrollView.contentOffset.x), max(0, parent.contentWidth - scrollView.bounds.width))
+        }
+    }
+}
+
+private struct TimelineDisabledPattern: View {
+    var body: some View {
+        Canvas { context, size in
+            var path = Path()
+            let spacing: CGFloat = 8
+            var x = -size.height
+            while x < size.width + size.height {
+                path.move(to: CGPoint(x: x, y: size.height))
+                path.addLine(to: CGPoint(x: x + size.height, y: 0))
+                x += spacing
+            }
+            context.stroke(path, with: .color(Color.white.opacity(0.07)), lineWidth: 1)
         }
     }
 }
@@ -2131,6 +3152,8 @@ private struct TimelineEventBlocksLayer: View, Equatable {
     let viewportWidth: CGFloat
     let renderOffset: CGFloat
     let positionOffset: CGFloat
+    let editableStartX: CGFloat
+    let editableEndX: CGFloat
     let color: Color
     let selectedEventID: UUID?
     let resizeSensitivity: CGFloat
@@ -2151,6 +3174,8 @@ private struct TimelineEventBlocksLayer: View, Equatable {
             && lhs.viewportWidth == rhs.viewportWidth
             && lhs.renderOffset == rhs.renderOffset
             && lhs.positionOffset == rhs.positionOffset
+            && lhs.editableStartX == rhs.editableStartX
+            && lhs.editableEndX == rhs.editableEndX
             && lhs.selectedEventID == rhs.selectedEventID
             && lhs.resizeSensitivity == rhs.resizeSensitivity
             && lhs.resizeAutoScrollTranslation == rhs.resizeAutoScrollTranslation
@@ -2164,17 +3189,22 @@ private struct TimelineEventBlocksLayer: View, Equatable {
         }
     }
 
+    @ViewBuilder
     private func eventBlock(_ event: TimelineRenderEvent) -> some View {
+        let editableWidth = max(1, editableEndX - editableStartX)
         let rawBlockWidth = event.isDuration
-            ? max(18, CGFloat(event.durationSeconds) / CGFloat(max(maxSeconds, 1)) * contentWidth)
+            ? max(18, CGFloat(event.durationSeconds) / CGFloat(max(maxSeconds, 1)) * editableWidth)
             : CGFloat(34)
-        let eventX = xOffset(for: event.startSeconds) - (event.isDuration ? 0 : rawBlockWidth / 2)
-        let clampedX = min(max(0, eventX), max(0, contentWidth - rawBlockWidth))
+        let eventStartX = xOffset(for: event.startSeconds)
+        let eventX = event.isDuration
+            ? eventStartX
+            : eventStartX - rawBlockWidth / 2
+        let clampedX = min(max(editableStartX, eventX), max(editableStartX, editableEndX - rawBlockWidth))
         let viewportTrackWidth = viewportWidth
         let renderPadding: CGFloat = 0
-        let visibleLeft = max(0, renderOffset - renderPadding)
-        let visibleRight = min(contentWidth, renderOffset + viewportTrackWidth + renderPadding)
-        let actualEndX = clampedX + rawBlockWidth
+        let visibleLeft = max(editableStartX, renderOffset - renderPadding)
+        let visibleRight = min(editableEndX, renderOffset + viewportTrackWidth + renderPadding)
+        let actualEndX = min(editableEndX, clampedX + rawBlockWidth)
         let renderedX = event.isDuration ? max(clampedX, visibleLeft) : clampedX
         let renderedEndX = event.isDuration ? min(actualEndX, visibleRight) : clampedX + rawBlockWidth
         let renderedWidth = event.isDuration ? max(18, renderedEndX - renderedX) : rawBlockWidth
@@ -2182,45 +3212,50 @@ private struct TimelineEventBlocksLayer: View, Equatable {
         let showsEndHandle = !event.isDuration || (actualEndX >= visibleLeft && actualEndX <= visibleRight)
         let detailText = renderedWidth > 52 ? (event.isDuration ? Self.timeText(event.durationSeconds) : event.pointDetail) : nil
 
-        return TimelineEventBlockView(
-            title: event.title,
-            detail: detailText,
-            width: renderedWidth,
-            baseX: renderedX,
-            maxX: max(0, contentWidth - renderedWidth),
-            scrollOffset: positionOffset,
-            color: color,
-            isFailed: event.isFailed,
-            isDuration: event.isDuration,
-            isSelected: selectedEventID == event.id,
-            showsStartHandle: showsStartHandle,
-            showsEndHandle: showsEndHandle,
-            resizeSensitivity: resizeSensitivity,
-            resizeAutoScrollTranslation: selectedEventID == event.id ? resizeAutoScrollTranslation : 0,
-            onTap: {
-                onTap(event)
-            },
-            onDragChanged: { translation, location in
-                onDragChanged(event, translation, location)
-            },
-            onDragEnded: { translation in
-                onDragEnded(event, translation)
-            },
-            onDragCancelled: onDragCancelled,
-            onResizeStartEnded: { translation in
-                onResizeStartEnded(event, translation)
-            },
-            onResizeEndEnded: { translation in
-                onResizeEndEnded(event, translation)
-            },
-            onResizeDragChanged: onResizeDragChanged,
-            onResizeDragEnded: onResizeDragEnded
-        )
-        .equatable()
+        if renderedWidth > 0 && renderedX < editableEndX && renderedEndX > editableStartX {
+            TimelineEventBlockView(
+                title: event.title,
+                detail: detailText,
+                width: renderedWidth,
+                minX: editableStartX,
+                baseX: renderedX,
+                maxX: max(editableStartX, editableEndX - renderedWidth),
+                scrollOffset: positionOffset,
+                color: color,
+                isFailed: event.isFailed,
+                isDuration: event.isDuration,
+                isSelected: selectedEventID == event.id,
+                showsStartHandle: showsStartHandle,
+                showsEndHandle: showsEndHandle,
+                resizeSensitivity: resizeSensitivity,
+                resizeAutoScrollTranslation: selectedEventID == event.id ? resizeAutoScrollTranslation : 0,
+                onTap: {
+                    onTap(event)
+                },
+                onDragChanged: { translation, location in
+                    onDragChanged(event, translation, location)
+                },
+                onDragEnded: { translation in
+                    onDragEnded(event, translation)
+                },
+                onDragCancelled: onDragCancelled,
+                onResizeStartEnded: { translation in
+                    onResizeStartEnded(event, translation)
+                },
+                onResizeEndEnded: { translation in
+                    onResizeEndEnded(event, translation)
+                },
+                onResizeDragChanged: onResizeDragChanged,
+                onResizeDragEnded: onResizeDragEnded
+            )
+            .equatable()
+        }
     }
 
     private func xOffset(for seconds: Int) -> CGFloat {
-        CGFloat(max(0, seconds)) / CGFloat(max(maxSeconds, 1)) * contentWidth
+        editableStartX
+            + CGFloat(min(max(0, seconds), maxSeconds)) / CGFloat(max(maxSeconds, 1))
+            * max(1, editableEndX - editableStartX)
     }
 
     private static func timeText(_ seconds: Int) -> String {
@@ -2232,6 +3267,7 @@ private struct TimelineEventBlockView: View, Equatable {
     let title: String
     let detail: String?
     let width: CGFloat
+    let minX: CGFloat
     let baseX: CGFloat
     let maxX: CGFloat
     let scrollOffset: CGFloat
@@ -2259,6 +3295,7 @@ private struct TimelineEventBlockView: View, Equatable {
         lhs.title == rhs.title
             && lhs.detail == rhs.detail
             && lhs.width == rhs.width
+            && lhs.minX == rhs.minX
             && lhs.baseX == rhs.baseX
             && lhs.maxX == rhs.maxX
             && lhs.scrollOffset == rhs.scrollOffset
@@ -2273,12 +3310,12 @@ private struct TimelineEventBlockView: View, Equatable {
 
     private var currentX: CGFloat {
         let autoScrollTranslation = dragState.isActive ? resizeAutoScrollTranslation : 0
-        return min(max(0, baseX + dragState.translation + autoScrollTranslation), maxX)
+        return min(max(minX, baseX + dragState.translation + autoScrollTranslation), maxX)
     }
 
     private var previewX: CGFloat {
         if let leftTranslation = resizeState.leftTranslation {
-            return min(max(-baseX, resizePreviewTranslation(leftTranslation) + resizeAutoScrollTranslation), width - minimumDurationWidth)
+            return min(max(minX - baseX, resizePreviewTranslation(leftTranslation) + resizeAutoScrollTranslation), width - minimumDurationWidth)
         }
         return 0
     }
@@ -2325,7 +3362,7 @@ private struct TimelineEventBlockView: View, Equatable {
     }
 
     private var cornerRadius: CGFloat {
-        isSelected ? 2 : 7
+        3
     }
 
     private var dragGesture: some Gesture {
@@ -2392,20 +3429,7 @@ private struct TimelineEventBlockView: View, Equatable {
 
     private var blockContent: some View {
         ZStack(alignment: .leading) {
-            HStack(spacing: 4) {
-                Text(title)
-                    .font(.caption2.weight(.black))
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.55)
-
-                if let detail {
-                    Text(detail)
-                        .font(.caption2.weight(.bold).monospacedDigit())
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.55)
-                }
-            }
-            .padding(.horizontal, isDuration ? 14 : 7)
+            Color.clear
 
             if isDuration && isSelected && (showsStartHandle || showsEndHandle) {
                 HStack(spacing: 0) {
@@ -2422,7 +3446,7 @@ private struct TimelineEventBlockView: View, Equatable {
         }
         .foregroundStyle(.white)
         .frame(width: displayedWidth, height: 28)
-        .background(color.opacity(isFailed ? 0.42 : 0.78))
+        .background(color.opacity(isFailed ? 0.46 : 0.82))
         .clipShape(RoundedRectangle(cornerRadius: cornerRadius))
         .overlay(
             RoundedRectangle(cornerRadius: cornerRadius)
@@ -2441,17 +3465,17 @@ private struct TimelineEventBlockView: View, Equatable {
     }
 
     private func resizeHandle(edge: ResizeEdge) -> some View {
-        Rectangle()
-            .fill(Color.white.opacity(resizeState.edge == edge ? 1.0 : 0.94))
-            .frame(width: 22, height: 26)
+        Circle()
+            .fill(color.opacity(resizeState.edge == edge ? 1.0 : 0.94))
+            .frame(width: 13, height: 13)
             .overlay(
-                Rectangle()
-                    .fill(Color.gray.opacity(0.48))
-                    .frame(width: 3, height: 15)
+                Circle()
+                    .stroke(Color.white.opacity(0.86), lineWidth: 1)
             )
             .frame(width: 24, height: 28)
-        .contentShape(Rectangle())
-        .highPriorityGesture(resizeGesture(edge: edge))
+            .offset(x: edge == .start ? -6 : 6)
+            .contentShape(Rectangle())
+            .highPriorityGesture(resizeGesture(edge: edge))
     }
 
     private func resizePreviewTranslation(_ translation: CGFloat) -> CGFloat {
@@ -2526,6 +3550,331 @@ private struct TimelineEventBlockView: View, Equatable {
     }
 }
 
+private struct TimelineEventDraft {
+    var category: TimelineEventCategory
+    var half: Int
+    var seconds: Int
+    var durationSeconds: Int
+    var teamSide: TimelineTeamSide
+    var isSuccessful: Bool
+    var playerID: UUID?
+}
+
+private struct TimelineDeletionCandidate: Identifiable {
+    let id: UUID
+    let title: String
+}
+
+private enum TimelineTeamSide: String, CaseIterable, Identifiable {
+    case home
+    case away
+
+    var id: String { rawValue }
+}
+
+private struct TimelineEventAddSheet: View {
+    @Environment(\.dismiss) private var dismiss
+
+    let initialCategory: TimelineEventCategory
+    let initialHalf: Int
+    let homeTeamName: String
+    let awayTeamName: String
+    let homePlayers: [Player]
+    let awayPlayers: [Player]
+    let onAdd: (TimelineEventDraft) -> Void
+
+    @State private var selectedCategory: TimelineEventCategory
+    @State private var selectedHalf: Int
+    @State private var eventSeconds = 0
+    @State private var durationSeconds = 30
+    @State private var selectedTeamSide: TimelineTeamSide = .home
+    @State private var isSuccessful = true
+    @State private var selectedPlayerID: UUID?
+
+    init(
+        initialCategory: TimelineEventCategory = .tryScore,
+        initialHalf: Int,
+        homeTeamName: String,
+        awayTeamName: String,
+        homePlayers: [Player],
+        awayPlayers: [Player],
+        onAdd: @escaping (TimelineEventDraft) -> Void
+    ) {
+        self.initialCategory = initialCategory
+        self.initialHalf = initialHalf
+        self.homeTeamName = homeTeamName
+        self.awayTeamName = awayTeamName
+        self.homePlayers = homePlayers
+        self.awayPlayers = awayPlayers
+        self.onAdd = onAdd
+        _selectedCategory = State(initialValue: initialCategory)
+        _selectedHalf = State(initialValue: initialHalf)
+    }
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                Capsule()
+                    .fill(Color.secondary.opacity(0.32))
+                    .frame(width: 72, height: 5)
+                    .frame(maxWidth: .infinity)
+
+                HStack(alignment: .top) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("イベント追加")
+                            .font(.title2.weight(.black))
+                        Text(selectedCategory.title)
+                            .font(.subheadline.weight(.bold))
+                            .foregroundStyle(selectedCategory.color)
+                    }
+
+                    Spacer()
+
+                    Button("閉じる") {
+                        dismiss()
+                    }
+                    .font(.subheadline.weight(.bold))
+                    .foregroundStyle(.blue)
+                }
+
+                section("種類") {
+                    LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 8) {
+                        ForEach(TimelineEventCategory.allCases) { category in
+                            categoryButton(category)
+                        }
+                    }
+                }
+
+                section("前後半") {
+                    segmentedControl([
+                        (title: "前半", isSelected: selectedHalf == 0, action: { selectedHalf = 0 }),
+                        (title: "後半", isSelected: selectedHalf == 1, action: { selectedHalf = 1 })
+                    ])
+                }
+
+                if selectedCategory.needsTeamSelection {
+                    section("チーム") {
+                        segmentedControl([
+                            (title: "HOME", isSelected: selectedTeamSide == .home, action: {
+                                selectedTeamSide = .home
+                                selectedPlayerID = nil
+                            }),
+                            (title: "AWAY", isSelected: selectedTeamSide == .away, action: {
+                                selectedTeamSide = .away
+                                selectedPlayerID = nil
+                            })
+                        ])
+                        Text(selectedTeamSide == .home ? homeTeamName : awayTeamName)
+                            .font(.caption.weight(.bold))
+                            .foregroundStyle(.secondary)
+                    }
+                }
+
+                if selectedCategory.allowsOutcomeSelection {
+                    section("結果") {
+                        segmentedControl([
+                            (title: "成功", isSelected: isSuccessful, action: { isSuccessful = true }),
+                            (title: "失敗", isSelected: !isSuccessful, action: { isSuccessful = false })
+                        ])
+                    }
+                }
+
+                if selectedCategory.allowsPlayerSelection {
+                    section("選手") {
+                        playerMenu
+                    }
+                }
+
+                secondsEditor(title: selectedCategory.isDuration ? "開始" : "時刻", value: eventSeconds) { newValue in
+                    eventSeconds = max(0, newValue)
+                }
+
+                if selectedCategory.isDuration {
+                    secondsEditor(title: "長さ", value: durationSeconds) { newValue in
+                        durationSeconds = max(1, newValue)
+                    }
+                }
+
+                Button {
+                    onAdd(
+                        TimelineEventDraft(
+                            category: selectedCategory,
+                            half: selectedHalf,
+                            seconds: eventSeconds,
+                            durationSeconds: durationSeconds,
+                            teamSide: selectedTeamSide,
+                            isSuccessful: isSuccessful,
+                            playerID: selectedCategory.allowsPlayerSelection ? selectedPlayerID : nil
+                        )
+                    )
+                    dismiss()
+                } label: {
+                    Label("追加", systemImage: "plus.circle.fill")
+                        .font(.headline.weight(.black))
+                        .foregroundStyle(.white)
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 52)
+                        .background(Color.blue)
+                        .clipShape(RoundedRectangle(cornerRadius: 12))
+                }
+                .buttonStyle(.plain)
+            }
+            .padding(20)
+        }
+    }
+
+    private var activePlayers: [Player] {
+        selectedTeamSide == .home ? homePlayers : awayPlayers
+    }
+
+    private var selectedPlayerName: String {
+        guard let selectedPlayerID,
+              let player = activePlayers.first(where: { $0.id == selectedPlayerID }) else {
+            return "選手なし"
+        }
+        return playerDisplayName(player)
+    }
+
+    private var playerMenu: some View {
+        Menu {
+            Button("選手なし") {
+                selectedPlayerID = nil
+            }
+            ForEach(activePlayers, id: \.id) { player in
+                Button(playerDisplayName(player)) {
+                    selectedPlayerID = player.id
+                }
+            }
+        } label: {
+            HStack {
+                Text(selectedPlayerName)
+                    .font(.headline.weight(.bold))
+                Spacer()
+                Image(systemName: "chevron.up.chevron.down")
+                    .font(.caption.weight(.black))
+            }
+            .foregroundStyle(.primary)
+            .padding(.horizontal, 12)
+            .frame(height: 48)
+            .background(Color.secondary.opacity(0.12))
+            .clipShape(RoundedRectangle(cornerRadius: 10))
+        }
+    }
+
+    private func categoryButton(_ category: TimelineEventCategory) -> some View {
+        Button {
+            selectedCategory = category
+            if !category.allowsOutcomeSelection {
+                isSuccessful = true
+            }
+            if !category.allowsPlayerSelection {
+                selectedPlayerID = nil
+            }
+        } label: {
+            HStack(spacing: 8) {
+                Image(systemName: category.systemImage)
+                    .font(.caption.weight(.black))
+                    .frame(width: 18)
+                Text(category.shortTitle)
+                    .font(.caption.weight(.black))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.72)
+                Spacer(minLength: 0)
+            }
+            .foregroundStyle(selectedCategory == category ? .white : category.color)
+            .padding(.horizontal, 10)
+            .frame(height: 42)
+            .background((selectedCategory == category ? category.color : category.color.opacity(0.14)))
+            .clipShape(RoundedRectangle(cornerRadius: 10))
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func section<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(title)
+                .font(.caption.weight(.black))
+                .foregroundStyle(.secondary)
+            content()
+        }
+    }
+
+    private func segmentedControl(_ items: [(title: String, isSelected: Bool, action: () -> Void)]) -> some View {
+        HStack(spacing: 0) {
+            ForEach(Array(items.enumerated()), id: \.offset) { _, item in
+                Button(action: item.action) {
+                    Text(item.title)
+                        .font(.subheadline.weight(.black))
+                        .foregroundStyle(item.isSelected ? .white : .secondary)
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 40)
+                        .background {
+                            if item.isSelected {
+                                RoundedRectangle(cornerRadius: 10)
+                                    .fill(Color.blue)
+                            }
+                        }
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(3)
+        .background(Color.secondary.opacity(0.12))
+        .clipShape(RoundedRectangle(cornerRadius: 12))
+    }
+
+    private func secondsEditor(title: String, value: Int, onChange: @escaping (Int) -> Void) -> some View {
+        section(title) {
+            HStack {
+                Text(Self.timeText(value))
+                    .font(.system(size: 34, weight: .black, design: .monospaced))
+                Spacer()
+            }
+
+            HStack(spacing: 8) {
+                stepButton("-1分", value: value, delta: -60, minimum: title == "長さ" ? 1 : 0, onChange: onChange)
+                stepButton("-10秒", value: value, delta: -10, minimum: title == "長さ" ? 1 : 0, onChange: onChange)
+                stepButton("+10秒", value: value, delta: 10, minimum: title == "長さ" ? 1 : 0, onChange: onChange)
+                stepButton("+1分", value: value, delta: 60, minimum: title == "長さ" ? 1 : 0, onChange: onChange)
+            }
+        }
+    }
+
+    private func stepButton(
+        _ title: String,
+        value: Int,
+        delta: Int,
+        minimum: Int,
+        onChange: @escaping (Int) -> Void
+    ) -> some View {
+        Button {
+            onChange(max(minimum, value + delta))
+        } label: {
+            Text(title)
+                .font(.caption.weight(.black).monospacedDigit())
+                .foregroundStyle(.white)
+                .frame(maxWidth: .infinity)
+                .frame(height: 38)
+                .background(delta < 0 ? Color.orange : Color.blue)
+                .clipShape(RoundedRectangle(cornerRadius: 10))
+        }
+        .buttonStyle(.plain)
+        .disabled(delta < 0 && value <= minimum)
+        .opacity(delta < 0 && value <= minimum ? 0.45 : 1)
+    }
+
+    private func playerDisplayName(_ player: Player) -> String {
+        if let name = player.name, !name.isEmpty {
+            return "#\(player.number) \(name)"
+        }
+        return "#\(player.number)"
+    }
+
+    private static func timeText(_ seconds: Int) -> String {
+        String(format: "%02d:%02d", seconds / 60, seconds % 60)
+    }
+}
+
 private struct EventTimeEditorSheet: View {
     @Environment(\.dismiss) private var dismiss
 
@@ -2538,6 +3887,7 @@ private struct EventTimeEditorSheet: View {
     let impactColor: Color
     let accent: Color
     let onAdjust: (Int) -> Int
+    let onDelete: () -> Void
 
     @State private var displayedSeconds: Int
 
@@ -2550,7 +3900,8 @@ private struct EventTimeEditorSheet: View {
         impactText: String,
         impactColor: Color,
         accent: Color,
-        onAdjust: @escaping (Int) -> Int
+        onAdjust: @escaping (Int) -> Int,
+        onDelete: @escaping () -> Void
     ) {
         self.event = event
         self.editorTitle = editorTitle
@@ -2561,6 +3912,7 @@ private struct EventTimeEditorSheet: View {
         self.impactColor = impactColor
         self.accent = accent
         self.onAdjust = onAdjust
+        self.onDelete = onDelete
         _displayedSeconds = State(initialValue: event.seconds)
     }
 
@@ -2641,6 +3993,20 @@ private struct EventTimeEditorSheet: View {
             Text(event.category == "possession" ? "区間ブロックは横ドラッグで開始位置、ボタンで長さを調整できます。" : "時刻を変更すると、一覧と得点タイムラインの並び順が再計算されます。")
                 .font(.footnote)
                 .foregroundStyle(.secondary)
+
+            Button(role: .destructive) {
+                dismiss()
+                onDelete()
+            } label: {
+                Label("イベントを削除", systemImage: "trash.fill")
+                    .font(.headline.weight(.black))
+                    .foregroundStyle(.white)
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 48)
+                    .background(Color.red)
+                    .clipShape(RoundedRectangle(cornerRadius: 12))
+            }
+            .buttonStyle(.plain)
         }
         .padding(20)
     }
@@ -2680,7 +4046,7 @@ private enum TimelineResizeEdge: Equatable {
     case end
 }
 
-private enum TimelineEventCategory {
+private enum TimelineEventCategory: CaseIterable, Identifiable {
     case homePossession
     case awayPossession
     case bip
@@ -2691,10 +4057,72 @@ private enum TimelineEventCategory {
     case lineout
     case scrum
 
+    var id: String { storageCategory + shortTitle }
+
+    var storageCategory: String {
+        switch self {
+        case .homePossession, .awayPossession, .bip: return "possession"
+        case .tryScore: return "try"
+        case .conversion: return "conversion"
+        case .penaltyGoal: return "penalty_goal"
+        case .dropGoal: return "drop_goal"
+        case .lineout: return "lineout"
+        case .scrum: return "scrum"
+        }
+    }
+
+    var systemImage: String {
+        switch self {
+        case .homePossession: return "house.fill"
+        case .awayPossession: return "a.circle.fill"
+        case .bip: return "clock.fill"
+        case .tryScore: return "rugbyball.fill"
+        case .conversion: return "figure.rugby"
+        case .penaltyGoal: return "p.circle.fill"
+        case .dropGoal: return "d.circle.fill"
+        case .lineout: return "figure.strengthtraining.traditional"
+        case .scrum: return "person.3.fill"
+        }
+    }
+
+    var isDuration: Bool {
+        switch self {
+        case .homePossession, .awayPossession, .bip: return true
+        default: return false
+        }
+    }
+
+    var needsTeamSelection: Bool {
+        switch self {
+        case .tryScore, .conversion, .penaltyGoal, .dropGoal, .lineout, .scrum:
+            return true
+        case .homePossession, .awayPossession, .bip:
+            return false
+        }
+    }
+
+    var allowsOutcomeSelection: Bool {
+        switch self {
+        case .conversion, .penaltyGoal, .dropGoal, .lineout, .scrum:
+            return true
+        case .homePossession, .awayPossession, .bip, .tryScore:
+            return false
+        }
+    }
+
+    var allowsPlayerSelection: Bool {
+        switch self {
+        case .tryScore, .conversion, .penaltyGoal, .dropGoal:
+            return true
+        case .homePossession, .awayPossession, .bip, .lineout, .scrum:
+            return false
+        }
+    }
+
     var title: String {
         switch self {
-        case .homePossession: return "HOMEポゼッション"
-        case .awayPossession: return "AWAYポゼッション"
+        case .homePossession: return "HOME"
+        case .awayPossession: return "AWAY"
         case .bip: return "BIP"
         case .tryScore: return "トライ"
         case .conversion: return "コンバージョン"
@@ -2730,16 +4158,27 @@ private enum TimelineEventCategory {
 
     var color: Color {
         switch self {
-        case .homePossession: return .blue
-        case .awayPossession: return .red
-        case .bip: return .indigo
-        case .tryScore: return .purple
-        case .conversion: return .green
-        case .penaltyGoal, .dropGoal: return .yellow
-        case .lineout: return .teal
-        case .scrum: return .orange
+        case .homePossession: return .timelineHome
+        case .awayPossession: return .timelineAway
+        case .bip: return .timelineBIP
+        case .tryScore: return .timelineTry
+        case .conversion: return .timelineConversion
+        case .penaltyGoal, .dropGoal: return .timelineKick
+        case .lineout: return .timelineLineout
+        case .scrum: return .timelineScrum
         }
     }
+}
+
+private extension Color {
+    static var timelineHome: Color { Color(red: 0.02, green: 0.32, blue: 0.95) }
+    static var timelineAway: Color { Color(red: 0.98, green: 0.12, blue: 0.18) }
+    static var timelineBIP: Color { Color(red: 0.35, green: 0.15, blue: 0.88) }
+    static var timelineTry: Color { Color(red: 0.22, green: 0.70, blue: 0.24) }
+    static var timelineConversion: Color { Color(red: 0.00, green: 0.58, blue: 0.66) }
+    static var timelineKick: Color { Color(red: 0.93, green: 0.72, blue: 0.13) }
+    static var timelineLineout: Color { Color(red: 0.05, green: 0.68, blue: 0.70) }
+    static var timelineScrum: Color { Color(red: 0.91, green: 0.35, blue: 0.05) }
 }
 
 private extension View {
