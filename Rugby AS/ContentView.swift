@@ -391,6 +391,7 @@ struct ContentView: View {
         for event in relatedEvents {
             modelContext.delete(event)
         }
+        VideoStorage.deleteVideo(for: match.id)
         modelContext.delete(match)
         try? modelContext.save()
     }

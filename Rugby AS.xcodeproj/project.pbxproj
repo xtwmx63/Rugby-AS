@@ -15,6 +15,7 @@
 		CB170E4E2FB8F514006E7CFC /* MatchSummaryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CB170E4D2FB8F514006E7CFC /* MatchSummaryView.swift */; };
 		CB170E502FBB0E18006E7CFC /* V3RecordingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CB170E4F2FBB0E18006E7CFC /* V3RecordingView.swift */; };
 		CB3318522FBE0DD600368ACC /* ImageStorage.swift in Sources */ = {isa = PBXBuildFile; fileRef = CB3318512FBE0DD600368ACC /* ImageStorage.swift */; };
+		CB44D0022FD4700000E7D001 /* VideoStorage.swift in Sources */ = {isa = PBXBuildFile; fileRef = CB44D0012FD4700000E7D001 /* VideoStorage.swift */; };
 		CB9FBA0D2FC2455B00ADC6A3 /* LineupRegistrationView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CB9FBA0C2FC2455B00ADC6A3 /* LineupRegistrationView.swift */; };
 		CB9FBA152FC8C13500ADC6A3 /* TimelineEditorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CB9FBA142FC8C13500ADC6A3 /* TimelineEditorView.swift */; };
 /* End PBXBuildFile section */
@@ -28,6 +29,7 @@
 		CB170E4D2FB8F514006E7CFC /* MatchSummaryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MatchSummaryView.swift; sourceTree = "<group>"; };
 		CB170E4F2FBB0E18006E7CFC /* V3RecordingView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = V3RecordingView.swift; sourceTree = "<group>"; };
 		CB3318512FBE0DD600368ACC /* ImageStorage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ImageStorage.swift; sourceTree = "<group>"; };
+		CB44D0012FD4700000E7D001 /* VideoStorage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VideoStorage.swift; sourceTree = "<group>"; };
 		CB9FBA0C2FC2455B00ADC6A3 /* LineupRegistrationView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LineupRegistrationView.swift; sourceTree = "<group>"; };
 		CB9FBA142FC8C13500ADC6A3 /* TimelineEditorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TimelineEditorView.swift; sourceTree = "<group>"; };
 		CBF67CA62FB8E34C006E5EC5 /* Rugby AS.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "Rugby AS.app"; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -59,6 +61,7 @@
 				CBF67CA72FB8E34C006E5EC5 /* Products */,
 				CB170E432FB8ECE7006E7CFC /* Models.swift */,
 				CB3318512FBE0DD600368ACC /* ImageStorage.swift */,
+				CB44D0012FD4700000E7D001 /* VideoStorage.swift */,
 				CB170E452FB8EEB3006E7CFC /* TeamViews.swift */,
 				CB170E472FB8EF84006E7CFC /* CreateMatchView.swift */,
 				CB170E492FB8F18B006E7CFC /* PlayerSelectionSheet.swift */,
@@ -159,6 +162,7 @@
 				CB170E4C2FB8F1C6006E7CFC /* RecordingView.swift in Sources */,
 				CB170E4A2FB8F18B006E7CFC /* PlayerSelectionSheet.swift in Sources */,
 				CB3318522FBE0DD600368ACC /* ImageStorage.swift in Sources */,
+				CB44D0022FD4700000E7D001 /* VideoStorage.swift in Sources */,
 				CB170E462FB8EEB3006E7CFC /* TeamViews.swift in Sources */,
 				CB170E4E2FB8F514006E7CFC /* MatchSummaryView.swift in Sources */,
 				CB9FBA0D2FC2455B00ADC6A3 /* LineupRegistrationView.swift in Sources */,
