@@ -14,7 +14,7 @@ import SwiftUI
 import UIKit
 import UniformTypeIdentifiers
 
-enum TimelineTrackType: String, CaseIterable, Identifiable {
+enum TimelineTrackType: String, CaseIterable, Identifiable, Hashable {
     case video
     case match
     case home
@@ -139,6 +139,45 @@ struct TimelineState {
     var videoSegments: [VideoSegment]
     var selectedClipID: UUID?
     var selectedVideoSegmentID: UUID?
+}
+
+private struct TimelineRulerContentIdentity: Hashable {
+    let durationTicks: Int
+}
+
+private struct TimelineTracksContentIdentity: Hashable {
+    let durationTicks: Int
+    let visibleTracks: [TimelineTrackType]
+    let clips: [TimelineClipContentIdentity]
+    let matchSegments: [MatchSegmentContentIdentity]
+    let videoSegments: [VideoSegmentContentIdentity]
+    let selectedClipID: UUID?
+    let selectedVideoSegmentID: UUID?
+}
+
+private struct TimelineClipContentIdentity: Hashable {
+    let id: UUID
+    let trackType: TimelineTrackType
+    let startTicks: Int
+    let endTicks: Int
+    let title: String
+    let isSelected: Bool
+}
+
+private struct MatchSegmentContentIdentity: Hashable {
+    let id: UUID
+    let halfType: String
+    let startTicks: Int
+    let endTicks: Int
+    let displayLabel: String
+}
+
+private struct VideoSegmentContentIdentity: Hashable {
+    let id: UUID
+    let sourceName: String
+    let startTicks: Int
+    let endTicks: Int
+    let fileName: String?
 }
 
 @MainActor
@@ -376,34 +415,48 @@ final class TimelineEditorViewModel: ObservableObject {
         self.selectedClipID = nil
     }
 
-    func adjustSelectedClipStart(by delta: Double) {
+    @discardableResult
+    func adjustSelectedClipStart(by delta: Double) -> Bool {
         guard let selectedClipID,
-              let index = timelineClips.firstIndex(where: { $0.id == selectedClipID }) else { return }
-        saveForUndo()
+              let index = timelineClips.firstIndex(where: { $0.id == selectedClipID }) else { return false }
         let newStart = min(max(0, timelineClips[index].startTime + delta), timelineClips[index].endTime - 1)
+        guard abs(newStart - timelineClips[index].startTime) > 0.001 else { return false }
+        saveForUndo()
         timelineClips[index].startTime = newStart
+        return true
     }
 
-    func adjustSelectedClipEnd(by delta: Double) {
+    @discardableResult
+    func adjustSelectedClipEnd(by delta: Double) -> Bool {
         guard let selectedClipID,
-              let index = timelineClips.firstIndex(where: { $0.id == selectedClipID }) else { return }
-        saveForUndo()
+              let index = timelineClips.firstIndex(where: { $0.id == selectedClipID }) else { return false }
         let newEnd = max(min(videoDuration, timelineClips[index].endTime + delta), timelineClips[index].startTime + 1)
+        guard abs(newEnd - timelineClips[index].endTime) > 0.001 else { return false }
+        saveForUndo()
         timelineClips[index].endTime = newEnd
+        return true
     }
 
-    func adjustSelectedClipStart(to newStart: Double) {
+    @discardableResult
+    func adjustSelectedClipStart(to newStart: Double) -> Bool {
         guard let selectedClipID,
-              let index = timelineClips.firstIndex(where: { $0.id == selectedClipID }) else { return }
+              let index = timelineClips.firstIndex(where: { $0.id == selectedClipID }) else { return false }
+        let clampedStart = min(max(0, newStart), timelineClips[index].endTime - 1)
+        guard abs(clampedStart - timelineClips[index].startTime) > 0.001 else { return false }
         saveForUndo()
-        timelineClips[index].startTime = min(max(0, newStart), timelineClips[index].endTime - 1)
+        timelineClips[index].startTime = clampedStart
+        return true
     }
 
-    func adjustSelectedClipEnd(to newEnd: Double) {
+    @discardableResult
+    func adjustSelectedClipEnd(to newEnd: Double) -> Bool {
         guard let selectedClipID,
-              let index = timelineClips.firstIndex(where: { $0.id == selectedClipID }) else { return }
+              let index = timelineClips.firstIndex(where: { $0.id == selectedClipID }) else { return false }
+        let clampedEnd = max(min(videoDuration, newEnd), timelineClips[index].startTime + 1)
+        guard abs(clampedEnd - timelineClips[index].endTime) > 0.001 else { return false }
         saveForUndo()
-        timelineClips[index].endTime = max(min(videoDuration, newEnd), timelineClips[index].startTime + 1)
+        timelineClips[index].endTime = clampedEnd
+        return true
     }
 
     func undo() {
@@ -944,12 +997,12 @@ struct TimelineEditorView: View {
     }
 
     private func adjustSelectedClipStart(by delta: Double) {
-        viewModel.adjustSelectedClipStart(by: delta)
+        guard viewModel.adjustSelectedClipStart(by: delta) else { return }
         saveSelectedClipToEvent()
     }
 
     private func adjustSelectedClipEnd(by delta: Double) {
-        viewModel.adjustSelectedClipEnd(by: delta)
+        guard viewModel.adjustSelectedClipEnd(by: delta) else { return }
         saveSelectedClipToEvent()
     }
 
@@ -1619,6 +1672,49 @@ struct TimelineTracksView: View {
     private let rulerHeight: CGFloat = 42
     private let rowHeight: CGFloat = 48
 
+    private var rulerContentIdentity: AnyHashable {
+        AnyHashable(TimelineRulerContentIdentity(durationTicks: Self.timeTicks(viewModel.videoDuration)))
+    }
+
+    private var tracksContentIdentity: AnyHashable {
+        AnyHashable(
+            TimelineTracksContentIdentity(
+                durationTicks: Self.timeTicks(viewModel.videoDuration),
+                visibleTracks: viewModel.visibleTracks,
+                clips: viewModel.timelineClips.map { clip in
+                    TimelineClipContentIdentity(
+                        id: clip.id,
+                        trackType: clip.trackType,
+                        startTicks: Self.timeTicks(clip.startTime),
+                        endTicks: Self.timeTicks(clip.endTime),
+                        title: clip.title,
+                        isSelected: clip.isSelected
+                    )
+                },
+                matchSegments: viewModel.matchSegments.map { segment in
+                    MatchSegmentContentIdentity(
+                        id: segment.id,
+                        halfType: segment.halfType.rawValue,
+                        startTicks: Self.timeTicks(segment.startTime),
+                        endTicks: Self.timeTicks(segment.endTime),
+                        displayLabel: segment.displayLabel
+                    )
+                },
+                videoSegments: viewModel.videoSegments.map { segment in
+                    VideoSegmentContentIdentity(
+                        id: segment.id,
+                        sourceName: segment.sourceName,
+                        startTicks: Self.timeTicks(segment.startTime),
+                        endTicks: Self.timeTicks(segment.endTime),
+                        fileName: segment.fileName
+                    )
+                },
+                selectedClipID: viewModel.selectedClipID,
+                selectedVideoSegmentID: viewModel.selectedVideoSegmentID
+            )
+        )
+    }
+
     var body: some View {
         GeometryReader { proxy in
             let timelineViewportWidth = max(1, proxy.size.width - labelWidth)
@@ -1647,6 +1743,7 @@ struct TimelineTracksView: View {
                             offset: $timelineScrollOffset,
                             isTracking: $isScrubbingTimeline,
                             contentWidth: scrollableContentWidth,
+                            contentIdentity: rulerContentIdentity,
                             showsIndicators: false
                         ) {
                             HStack(spacing: 0) {
@@ -1677,6 +1774,7 @@ struct TimelineTracksView: View {
                                 offset: $timelineScrollOffset,
                                 isTracking: $isScrubbingTimeline,
                                 contentWidth: scrollableContentWidth,
+                                contentIdentity: tracksContentIdentity,
                                 showsIndicators: true
                             ) {
                                 HStack(spacing: 0) {
@@ -1807,12 +1905,17 @@ struct TimelineTracksView: View {
         let progress = Double(min(max(0, offset), timelineCanvasWidth) / max(1, timelineCanvasWidth))
         return min(max(0, progress * duration), duration)
     }
+
+    private static func timeTicks(_ seconds: Double) -> Int {
+        Int((seconds * 10).rounded())
+    }
 }
 
 private struct TimelineHorizontalOffsetScrollView<Content: View>: UIViewRepresentable {
     @Binding var offset: CGFloat
     @Binding var isTracking: Bool
     var contentWidth: CGFloat
+    var contentIdentity: AnyHashable = 0
     var showsIndicators: Bool
     @ViewBuilder var content: Content
 
@@ -1832,7 +1935,7 @@ private struct TimelineHorizontalOffsetScrollView<Content: View>: UIViewRepresen
         scrollView.bounces = true
         scrollView.delaysContentTouches = false
 
-        let host = UIHostingController(rootView: AnyView(content.frame(width: contentWidth)))
+        let host = UIHostingController(rootView: hostedContent)
         host.view.backgroundColor = .clear
         host.view.translatesAutoresizingMaskIntoConstraints = false
         scrollView.addSubview(host.view)
@@ -1849,11 +1952,16 @@ private struct TimelineHorizontalOffsetScrollView<Content: View>: UIViewRepresen
 
         context.coordinator.host = host
         context.coordinator.widthConstraint = widthConstraint
+        context.coordinator.lastHostedContentKey = hostedContentKey
         return scrollView
     }
 
     func updateUIView(_ scrollView: UIScrollView, context: Context) {
-        context.coordinator.host?.rootView = AnyView(content.frame(width: contentWidth))
+        let contentKey = hostedContentKey
+        if context.coordinator.lastHostedContentKey != contentKey {
+            context.coordinator.host?.rootView = hostedContent
+            context.coordinator.lastHostedContentKey = contentKey
+        }
         context.coordinator.widthConstraint?.constant = contentWidth
         scrollView.showsHorizontalScrollIndicator = showsIndicators
         scrollView.alwaysBounceHorizontal = contentWidth > scrollView.bounds.width
@@ -1865,11 +1973,28 @@ private struct TimelineHorizontalOffsetScrollView<Content: View>: UIViewRepresen
         }
     }
 
+    private var hostedContent: AnyView {
+        AnyView(content.frame(width: contentWidth))
+    }
+
+    private var hostedContentKey: HostedContentKey {
+        HostedContentKey(
+            identity: contentIdentity,
+            contentWidth: Int(max(1, contentWidth).rounded())
+        )
+    }
+
+    struct HostedContentKey: Equatable {
+        let identity: AnyHashable
+        let contentWidth: Int
+    }
+
     final class Coordinator: NSObject, UIScrollViewDelegate {
         @Binding var offset: CGFloat
         @Binding var isTracking: Bool
         var host: UIHostingController<AnyView>?
         var widthConstraint: NSLayoutConstraint?
+        var lastHostedContentKey: HostedContentKey?
 
         init(offset: Binding<CGFloat>, isTracking: Binding<Bool>) {
             _offset = offset
@@ -1913,6 +2038,7 @@ struct TimelineTrackRowView: View {
     var onAdjustSelectedEnd: (Double) -> Void
 
     private let labelWidth: CGFloat = 110
+    @GestureState private var resizePreview: ClipResizePreview = .inactive
 
     var body: some View {
         HStack(spacing: 0) {
@@ -1952,7 +2078,8 @@ struct TimelineTrackRowView: View {
 
     private func eventClips(width: CGFloat) -> some View {
         ForEach(clips) { clip in
-            let block = blockFrame(start: clip.startTime, end: clip.endTime, width: width)
+            let times = displayedTimes(for: clip)
+            let block = blockFrame(start: times.start, end: times.end, width: width)
             ZStack {
                 HStack(spacing: 6) {
                     Text(clip.title)
@@ -1990,22 +2117,14 @@ struct TimelineTrackRowView: View {
                     HStack {
                         TimelineClipResizeHandle()
                             .highPriorityGesture(
-                                DragGesture(minimumDistance: 2)
-                                    .onEnded { value in
-                                        let delta = Double(value.translation.width / max(1, width)) * duration
-                                        onAdjustSelectedStart(delta)
-                                    }
+                                resizeGesture(edge: .start, width: width)
                             )
 
                         Spacer(minLength: 0)
 
                         TimelineClipResizeHandle()
                             .highPriorityGesture(
-                                DragGesture(minimumDistance: 2)
-                                    .onEnded { value in
-                                        let delta = Double(value.translation.width / max(1, width)) * duration
-                                        onAdjustSelectedEnd(delta)
-                                    }
+                                resizeGesture(edge: .end, width: width)
                             )
                     }
                     .padding(.horizontal, 4)
@@ -2017,6 +2136,9 @@ struct TimelineTrackRowView: View {
                 onSelectClip(clip.id)
             })
             .position(x: block.midX, y: rowHeight / 2)
+            .transaction { transaction in
+                transaction.animation = nil
+            }
         }
     }
 
@@ -2133,6 +2255,58 @@ struct TimelineTrackRowView: View {
         let endX = width * CGFloat(max(0, min(duration, end)) / max(1, duration))
         let blockWidth = max(34, endX - startX)
         return (startX + blockWidth / 2, blockWidth)
+    }
+
+    private func displayedTimes(for clip: TimelineClip) -> (start: Double, end: Double) {
+        var start = clip.startTime
+        var end = clip.endTime
+
+        guard clip.id == selectedClipID else {
+            return (start, end)
+        }
+
+        switch resizePreview.edge {
+        case .start:
+            start = min(max(0, start + resizePreview.delta), end - 1)
+        case .end:
+            end = max(min(duration, end + resizePreview.delta), start + 1)
+        case .none:
+            break
+        }
+
+        return (start, end)
+    }
+
+    private func resizeGesture(edge: ClipResizeEdge, width: CGFloat) -> some Gesture {
+        DragGesture(minimumDistance: 1, coordinateSpace: .global)
+            .updating($resizePreview) { value, state, _ in
+                state = ClipResizePreview(edge: edge, delta: resizeDelta(for: value.translation.width, width: width))
+            }
+            .onEnded { value in
+                let delta = resizeDelta(for: value.translation.width, width: width)
+                switch edge {
+                case .start:
+                    onAdjustSelectedStart(delta)
+                case .end:
+                    onAdjustSelectedEnd(delta)
+                }
+            }
+    }
+
+    private func resizeDelta(for translation: CGFloat, width: CGFloat) -> Double {
+        Double(translation / max(1, width)) * duration
+    }
+
+    private enum ClipResizeEdge: Equatable {
+        case start
+        case end
+    }
+
+    private struct ClipResizePreview: Equatable {
+        var edge: ClipResizeEdge?
+        var delta: Double
+
+        static let inactive = ClipResizePreview(edge: nil, delta: 0)
     }
 }
 
@@ -2320,6 +2494,7 @@ struct LegacyTimelineEditorView: View {
     @State private var activeVideoClipID: String?
     @State private var videoClipPendingDeletion: TimelineVideoClip?
     @State private var videoClipLoadingTask: Task<Void, Never>?
+    @State private var pendingScrollSeekTask: Task<Void, Never>?
     @State private var videoImportProgress: Double = 0
     @State private var videoImportCopiedBytes: Int64 = 0
     @State private var videoImportTotalBytes: Int64 = 0
@@ -2401,6 +2576,11 @@ struct LegacyTimelineEditorView: View {
         timelinePresentation.visibleEvents
     }
 
+    private var timelineAutoScrollIdentityBucket: Int {
+        guard timelineAutoScrollDirection != 0 else { return 0 }
+        return Int((timelineAutoScrollAccumulatedPixels / 12).rounded())
+    }
+
     private var scoringEvents: [StatEvent] {
         timelinePresentation.scoringEvents
     }
@@ -2439,7 +2619,8 @@ struct LegacyTimelineEditorView: View {
             rebuildTimelinePresentation()
         }
         .onChange(of: timelineScrollOffset) { _, _ in
-            guard !isTimelineScrollSyncSuppressed else { return }
+            guard !isTimelineScrollSyncSuppressed,
+                  timelineAutoScrollDirection == 0 else { return }
             syncPlayheadWithScroll()
         }
         .onChange(of: selectedVideoItems) { _, items in
@@ -2520,6 +2701,7 @@ struct LegacyTimelineEditorView: View {
         .onDisappear {
             pendingTimelineSaveTask?.cancel()
             videoClipLoadingTask?.cancel()
+            pendingScrollSeekTask?.cancel()
             stopTimelinePlayback()
             resetTimelineAutoScroll()
             saveTimelineChanges()
@@ -2888,6 +3070,10 @@ struct LegacyTimelineEditorView: View {
                 renderBucketWidth: timelineRenderBucketWidth,
                 hostOrigin: renderedFrame.origin,
                 hostWidth: renderedFrame.width,
+                contentIdentity: TimelineViewportContentIdentity(
+                    kind: "compact-ruler",
+                    renderWindowKey: timelineRenderWindow.key
+                ),
                 scrollOffset: $timelineScrollOffset,
                 onViewportFrameChange: { _ in },
                 onRenderFrameChange: { renderOffset, viewportWidth in
@@ -2926,6 +3112,14 @@ struct LegacyTimelineEditorView: View {
                 renderBucketWidth: timelineRenderBucketWidth,
                 hostOrigin: renderedFrame.origin,
                 hostWidth: renderedFrame.width,
+                contentIdentity: TimelineViewportContentIdentity(
+                    kind: "compact-tracks",
+                    renderWindowKey: timelineRenderWindow.key,
+                    selectedEventID: selectedTimelineEventID,
+                    autoScrollPixels: timelineAutoScrollIdentityBucket,
+                    videoClipIDs: importedVideoClips.map(\.id).joined(separator: "|"),
+                    selectedVideoClipID: selectedVideoClipID
+                ),
                 scrollOffset: $timelineScrollOffset,
                 onViewportFrameChange: { frame in
                     if timelineViewportFrame != frame {
@@ -3269,6 +3463,14 @@ struct LegacyTimelineEditorView: View {
                     renderBucketWidth: timelineRenderBucketWidth,
                     hostOrigin: renderedFrame.origin,
                     hostWidth: renderedFrame.width,
+                    contentIdentity: TimelineViewportContentIdentity(
+                        kind: "legacy-full",
+                        renderWindowKey: timelineRenderWindow.key,
+                        selectedEventID: selectedTimelineEventID,
+                        autoScrollPixels: timelineAutoScrollIdentityBucket,
+                        videoClipIDs: importedVideoClips.map(\.id).joined(separator: "|"),
+                        selectedVideoClipID: selectedVideoClipID
+                    ),
                     scrollOffset: $timelineScrollOffset,
                     onViewportFrameChange: { frame in
                         if timelineViewportFrame != frame {
@@ -4406,14 +4608,15 @@ struct LegacyTimelineEditorView: View {
     }
 
     private func startTimelineAutoScroll(direction: Int, maxSeconds: Int, intensity: CGFloat) {
+        let normalizedIntensity = (min(1, max(0, intensity)) * 10).rounded() / 10
         let shouldUpdateState = timelineAutoScrollDirection != direction
             || timelineAutoScrollMaxSeconds != maxSeconds
-            || abs(timelineAutoScrollIntensity - intensity) > 0.035
+            || abs(timelineAutoScrollIntensity - normalizedIntensity) > 0.001
 
         if shouldUpdateState {
             timelineAutoScrollDirection = direction
             timelineAutoScrollMaxSeconds = maxSeconds
-            timelineAutoScrollIntensity = intensity
+            timelineAutoScrollIntensity = normalizedIntensity
         }
 
         guard timelineAutoScrollTask == nil else { return }
@@ -4513,7 +4716,7 @@ struct LegacyTimelineEditorView: View {
                     stopTimelinePlayback()
                     break
                 }
-                try? await Task.sleep(for: .milliseconds(16))
+                try? await Task.sleep(for: .milliseconds(33))
             }
         }
     }
@@ -4521,6 +4724,7 @@ struct LegacyTimelineEditorView: View {
     private func stopTimelinePlayback() {
         timelinePlaybackTask?.cancel()
         timelinePlaybackTask = nil
+        pendingScrollSeekTask?.cancel()
         isTimelinePlaying = false
         videoPlayer?.pause()
     }
@@ -4900,6 +5104,7 @@ struct LegacyTimelineEditorView: View {
 
         playheadTimelineSecond = clampedSecond
         if seekVideo {
+            pendingScrollSeekTask?.cancel()
             self.seekVideo(to: clampedSecond)
         }
         guard viewportWidth > 0 else { return }
@@ -4930,9 +5135,19 @@ struct LegacyTimelineEditorView: View {
 
         let markerX = min(contentWidth, max(0, timelineScrollOffset + viewportWidth / 2))
         let second = Double(timelineSecond(forContentX: markerX, maxSeconds: maxSeconds, contentWidth: contentWidth))
-        playheadTimelineSecond = min(max(0, second), Double(maxSeconds))
+        let clampedSecond = min(max(0, second), Double(maxSeconds))
+        playheadTimelineSecond = clampedSecond
         if !isTimelinePlaying {
-            seekVideo(to: playheadTimelineSecond)
+            scheduleScrollSeek(to: clampedSecond)
+        }
+    }
+
+    private func scheduleScrollSeek(to seconds: Double) {
+        pendingScrollSeekTask?.cancel()
+        pendingScrollSeekTask = Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(120))
+            guard !Task.isCancelled, !isTimelinePlaying else { return }
+            seekVideo(to: seconds)
         }
     }
 
@@ -6022,6 +6237,7 @@ private struct TimelineNativeScrollViewport<Content: View>: UIViewRepresentable 
     let renderBucketWidth: CGFloat
     let hostOrigin: CGFloat
     let hostWidth: CGFloat
+    let contentIdentity: AnyHashable
     @Binding var scrollOffset: CGFloat
     let onViewportFrameChange: (CGRect) -> Void
     let onRenderFrameChange: (CGFloat, CGFloat) -> Void
@@ -6033,6 +6249,7 @@ private struct TimelineNativeScrollViewport<Content: View>: UIViewRepresentable 
         renderBucketWidth: CGFloat = 360,
         hostOrigin: CGFloat,
         hostWidth: CGFloat,
+        contentIdentity: AnyHashable = 0,
         scrollOffset: Binding<CGFloat>,
         onViewportFrameChange: @escaping (CGRect) -> Void,
         onRenderFrameChange: @escaping (CGFloat, CGFloat) -> Void,
@@ -6043,6 +6260,7 @@ private struct TimelineNativeScrollViewport<Content: View>: UIViewRepresentable 
         self.renderBucketWidth = renderBucketWidth
         self.hostOrigin = hostOrigin
         self.hostWidth = hostWidth
+        self.contentIdentity = contentIdentity
         _scrollOffset = scrollOffset
         self.onViewportFrameChange = onViewportFrameChange
         self.onRenderFrameChange = onRenderFrameChange
@@ -6074,6 +6292,7 @@ private struct TimelineNativeScrollViewport<Content: View>: UIViewRepresentable 
         scrollView.addSubview(host.view)
 
         context.coordinator.host = host
+        context.coordinator.lastHostedContentKey = hostedContentKey
         context.coordinator.updateHostedFrame(in: scrollView)
 
         DispatchQueue.main.async {
@@ -6086,7 +6305,11 @@ private struct TimelineNativeScrollViewport<Content: View>: UIViewRepresentable 
 
     func updateUIView(_ scrollView: UIScrollView, context: Context) {
         context.coordinator.parent = self
-        context.coordinator.host?.rootView = hostedContent
+        let contentKey = hostedContentKey
+        if context.coordinator.lastHostedContentKey != contentKey {
+            context.coordinator.host?.rootView = hostedContent
+            context.coordinator.lastHostedContentKey = contentKey
+        }
         context.coordinator.updateHostedFrame(in: scrollView)
 
         let maxOffset = max(0, contentWidth - scrollView.bounds.width)
@@ -6110,9 +6333,24 @@ private struct TimelineNativeScrollViewport<Content: View>: UIViewRepresentable 
         )
     }
 
+    private var hostedContentKey: HostedContentKey {
+        HostedContentKey(
+            identity: contentIdentity,
+            hostWidth: Int(max(1, hostWidth).rounded()),
+            viewportHeight: Int(max(1, viewportHeight).rounded())
+        )
+    }
+
+    struct HostedContentKey: Equatable {
+        let identity: AnyHashable
+        let hostWidth: Int
+        let viewportHeight: Int
+    }
+
     final class Coordinator: NSObject, UIScrollViewDelegate {
         var parent: TimelineNativeScrollViewport<Content>
         var host: UIHostingController<AnyView>?
+        var lastHostedContentKey: HostedContentKey?
         private var lastRenderOffset: CGFloat = -.greatestFiniteMagnitude
         private var lastViewportWidth: CGFloat = -.greatestFiniteMagnitude
 
@@ -6378,12 +6616,21 @@ private struct TimelineVideoClip: Identifiable, Equatable {
     var endSeconds: Double { startSeconds + durationSeconds }
 }
 
-private struct TimelineRenderWindowKey: Equatable {
+private struct TimelineRenderWindowKey: Hashable {
     let presentationVersion: Int
     let renderOffset: Int
     let viewportWidth: Int
     let contentWidth: Int
     let maxSeconds: Int
+}
+
+private struct TimelineViewportContentIdentity: Hashable {
+    let kind: String
+    let renderWindowKey: TimelineRenderWindowKey
+    var selectedEventID: UUID?
+    var autoScrollPixels = 0
+    var videoClipIDs = ""
+    var selectedVideoClipID: String?
 }
 
 private struct TimelineRenderWindow {
@@ -6485,7 +6732,15 @@ private struct TimelineEventBlocksLayer: View, Equatable {
             && lhs.editableEndX == rhs.editableEndX
             && lhs.selectedEventID == rhs.selectedEventID
             && lhs.resizeSensitivity == rhs.resizeSensitivity
-            && lhs.resizeAutoScrollTranslation == rhs.resizeAutoScrollTranslation
+            && lhs.autoScrollTranslationKey == rhs.autoScrollTranslationKey
+    }
+
+    private var autoScrollTranslationKey: CGFloat {
+        guard let selectedEventID,
+              events.contains(where: { $0.id == selectedEventID }) else {
+            return 0
+        }
+        return resizeAutoScrollTranslation
     }
 
     var body: some View {
@@ -6612,7 +6867,11 @@ private struct TimelineEventBlockView: View, Equatable {
             && lhs.showsStartHandle == rhs.showsStartHandle
             && lhs.showsEndHandle == rhs.showsEndHandle
             && lhs.resizeSensitivity == rhs.resizeSensitivity
-            && lhs.resizeAutoScrollTranslation == rhs.resizeAutoScrollTranslation
+            && lhs.autoScrollTranslationKey == rhs.autoScrollTranslationKey
+    }
+
+    private var autoScrollTranslationKey: CGFloat {
+        isSelected ? resizeAutoScrollTranslation : 0
     }
 
     private var currentX: CGFloat {
