@@ -1970,6 +1970,7 @@ struct TimelineEditorView: View {
             .onChanged { value in
                 isTimelineOverviewMode = false
                 timelineZoom = clampedTimelineZoom(baseTimelineZoom * value)
+                keepPlayheadCenteredAfterZoom()
             }
             .onEnded { value in
                 setTimelineZoom(baseTimelineZoom * value)
@@ -1980,6 +1981,13 @@ struct TimelineEditorView: View {
         isTimelineOverviewMode = zoom <= minimumTimelineZoom
         timelineZoom = clampedTimelineZoom(zoom)
         baseTimelineZoom = timelineZoom
+        keepPlayheadCenteredAfterZoom()
+    }
+
+    // ズームで横幅が変わっても、再生ヘッド位置の中身が画面中央から
+    // 動かないようにスクロール位置を取り直す(動画編集アプリと同じ挙動)。
+    private func keepPlayheadCenteredAfterZoom() {
+        scrollToTimelineSecond(playhead.second)
     }
 
     private func clampedTimelineZoom(_ zoom: CGFloat) -> CGFloat {
