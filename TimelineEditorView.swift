@@ -1752,8 +1752,10 @@ struct TimelineEditorView: View {
         return normalized * normalized * (3 - 2 * normalized)
     }
 
+    // 1ステップの移動量。間隔を85ms→33msに縮めた分だけ小さくして、
+    // 移動速度は変えずに動きだけ滑らかにする。
     private func timelineAutoScrollRepeatingStep(for power: CGFloat) -> CGFloat {
-        timelineAutoScrollStep * (0.08 + power * 2.45)
+        timelineAutoScrollStep * (0.08 + power * 2.45) * (33.0 / 85.0)
     }
 
     private func startTimelineAutoScroll(direction: Int, maxSeconds: Int, intensity: CGFloat) {
@@ -1778,7 +1780,7 @@ struct TimelineEditorView: View {
                     maxSeconds: timelineAutoScrollMaxSeconds,
                     step: step
                 )
-                try? await Task.sleep(for: .milliseconds(85))
+                try? await Task.sleep(for: .milliseconds(33))
             }
             timelineAutoScrollTask = nil
         }
