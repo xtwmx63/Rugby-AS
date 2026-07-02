@@ -458,6 +458,7 @@ struct TimelineEditorView: View {
                 renderBucketWidth: timelineRenderBucketWidth,
                 hostOrigin: renderedFrame.origin,
                 hostWidth: renderedFrame.width,
+                contentVersion: timelineRulerContentVersion,
                 scrollOffset: $timelineScrollOffset,
                 onViewportFrameChange: { _ in },
                 onRenderFrameChange: { renderOffset, viewportWidth in
@@ -496,6 +497,7 @@ struct TimelineEditorView: View {
                 renderBucketWidth: timelineRenderBucketWidth,
                 hostOrigin: renderedFrame.origin,
                 hostWidth: renderedFrame.width,
+                contentVersion: timelineTracksContentVersion,
                 scrollOffset: $timelineScrollOffset,
                 onViewportFrameChange: { frame in
                     if timelineViewportFrame != frame {
@@ -798,6 +800,7 @@ struct TimelineEditorView: View {
                     renderBucketWidth: timelineRenderBucketWidth,
                     hostOrigin: renderedFrame.origin,
                     hostWidth: renderedFrame.width,
+                    contentVersion: timelineTracksContentVersion,
                     scrollOffset: $timelineScrollOffset,
                     onViewportFrameChange: { frame in
                         if timelineViewportFrame != frame {
@@ -1225,6 +1228,22 @@ struct TimelineEditorView: View {
         let origin = min(max(0, renderOffset - timelineRenderPadding), maxOrigin)
         let end = min(contentWidth, max(origin + viewportWidth, renderOffset + viewportWidth + timelineRenderPadding))
         return (origin, max(1, end - origin))
+    }
+
+    // スクロール中の作り直しを避けるため「中身が変わったか」を1つの数値で表す。
+    // この値が変わったときだけ TimelineNativeScrollViewport が中身を更新する。
+    private var timelineRulerContentVersion: Int {
+        var hasher = Hasher()
+        hasher.combine(timelineRenderWindow.key)
+        return hasher.finalize()
+    }
+
+    private var timelineTracksContentVersion: Int {
+        var hasher = Hasher()
+        hasher.combine(timelineRenderWindow.key)
+        hasher.combine(selectedTimelineEventID)
+        hasher.combine(timelineAutoScrollAccumulatedPixels)
+        return hasher.finalize()
     }
 
     private var timelineZoomControls: some View {
@@ -2865,6 +2884,7 @@ private struct TimelineNativeScrollViewport<Content: View>: UIViewRepresentable 
     let renderBucketWidth: CGFloat
     let hostOrigin: CGFloat
     let hostWidth: CGFloat
+    let contentVersion: Int
     @Binding var scrollOffset: CGFloat
     let onViewportFrameChange: (CGRect) -> Void
     let onRenderFrameChange: (CGFloat, CGFloat) -> Void
@@ -2876,6 +2896,7 @@ private struct TimelineNativeScrollViewport<Content: View>: UIViewRepresentable 
         renderBucketWidth: CGFloat = 360,
         hostOrigin: CGFloat,
         hostWidth: CGFloat,
+        contentVersion: Int,
         scrollOffset: Binding<CGFloat>,
         onViewportFrameChange: @escaping (CGRect) -> Void,
         onRenderFrameChange: @escaping (CGFloat, CGFloat) -> Void,
@@ -2886,6 +2907,7 @@ private struct TimelineNativeScrollViewport<Content: View>: UIViewRepresentable 
         self.renderBucketWidth = renderBucketWidth
         self.hostOrigin = hostOrigin
         self.hostWidth = hostWidth
+        self.contentVersion = contentVersion
         _scrollOffset = scrollOffset
         self.onViewportFrameChange = onViewportFrameChange
         self.onRenderFrameChange = onRenderFrameChange
@@ -2917,6 +2939,7 @@ private struct TimelineNativeScrollViewport<Content: View>: UIViewRepresentable 
         scrollView.addSubview(host.view)
 
         context.coordinator.host = host
+        context.coordinator.lastContentVersion = contentVersion
         context.coordinator.updateHostedFrame(in: scrollView)
 
         DispatchQueue.main.async {
@@ -2929,7 +2952,12 @@ private struct TimelineNativeScrollViewport<Content: View>: UIViewRepresentable 
 
     func updateUIView(_ scrollView: UIScrollView, context: Context) {
         context.coordinator.parent = self
-        context.coordinator.host?.rootView = hostedContent
+        // 中身が変わったときだけSwiftUIツリーを差し替える。
+        // スクロールのたびに丸ごと作り直すとカクつくため。
+        if context.coordinator.lastContentVersion != contentVersion {
+            context.coordinator.lastContentVersion = contentVersion
+            context.coordinator.host?.rootView = hostedContent
+        }
         context.coordinator.updateHostedFrame(in: scrollView)
 
         let maxOffset = max(0, contentWidth - scrollView.bounds.width)
@@ -2956,6 +2984,7 @@ private struct TimelineNativeScrollViewport<Content: View>: UIViewRepresentable 
     final class Coordinator: NSObject, UIScrollViewDelegate {
         var parent: TimelineNativeScrollViewport<Content>
         var host: UIHostingController<AnyView>?
+        var lastContentVersion: Int?
         private var lastRenderOffset: CGFloat = -.greatestFiniteMagnitude
         private var lastViewportWidth: CGFloat = -.greatestFiniteMagnitude
 
@@ -3071,7 +3100,7 @@ private struct TimelineRenderEvent: Identifiable, Equatable {
     }
 }
 
-private struct TimelineRenderWindowKey: Equatable {
+private struct TimelineRenderWindowKey: Equatable, Hashable {
     let presentationVersion: Int
     let renderOffset: Int
     let viewportWidth: Int
