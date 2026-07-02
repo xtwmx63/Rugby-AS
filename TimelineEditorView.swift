@@ -5,9 +5,34 @@
 //  Created by Codex on 2026/05/29.
 //
 
+import Combine
 import SwiftData
 import SwiftUI
 import UIKit
+
+// 再生ヘッドの時刻とスクロール位置はスクロール中に毎フレーム変わる。
+// これを画面全体の状態(@State)に置くと毎フレーム画面全体を再計算して
+// カクつくため、この小さな箱に隔離し、時刻ラベルなど必要な部品だけが購読する。
+@MainActor
+private final class TimelinePlayheadState: ObservableObject {
+    @Published var second: Double = 0
+
+    // スクロールの生の位置。描画には使わないので @Published にしない。
+    var liveScrollOffset: CGFloat = 0
+
+    // 再生ヘッド起点で動かしたスクロールの目標位置。
+    // ここと一致している間は「ユーザーが指で動かした」扱いにしない。
+    var programmaticTargetOffset: CGFloat?
+}
+
+// 再生ヘッド時刻の表示形式(分:秒.1/10秒)
+private func timelinePlayheadTimeText(_ seconds: Double) -> String {
+    let totalTenths = Int((max(0, seconds) * 10).rounded())
+    let minutes = totalTenths / 600
+    let wholeSeconds = (totalTenths / 10) % 60
+    let tenths = totalTenths % 10
+    return String(format: "%02d:%02d.%d", minutes, wholeSeconds, tenths)
+}
 
 struct TimelineEditorView: View {
     @Environment(\.modelContext) private var modelContext
@@ -46,9 +71,8 @@ struct TimelineEditorView: View {
     @State private var timelineRenderedViewportWidth: CGFloat = 0
     @State private var timelineRenderWindow = TimelineRenderWindow.empty
     @State private var timelineAvailableViewportWidth: CGFloat = 0
-    @State private var isTimelineScrollSyncSuppressed = false
     @State private var isTimelineOverviewMode = true
-    @State private var playheadTimelineSecond: Double = 0
+    @State private var playhead = TimelinePlayheadState()
     @State private var didSetInitialPlayheadPosition = false
 
     private let minimumTimelineZoom: CGFloat = 0.035
@@ -157,10 +181,6 @@ struct TimelineEditorView: View {
             stopTimelinePlayback()
             rebuildTimelinePresentation()
         }
-        .onChange(of: timelineScrollOffset) { _, _ in
-            guard !isTimelineScrollSyncSuppressed else { return }
-            syncPlayheadWithScroll()
-        }
         .alert("保存できませんでした", isPresented: Binding(
             get: { saveErrorMessage != nil },
             set: { if !$0 { saveErrorMessage = nil } }
@@ -252,17 +272,7 @@ struct TimelineEditorView: View {
 
                 Spacer()
 
-                ShareLink(item: timelineShareText) {
-                    Image(systemName: "square.and.arrow.up")
-                        .font(.headline.weight(.bold))
-                        .foregroundStyle(.white)
-                        .frame(width: 40, height: 40)
-                        .background(Color.white.opacity(0.10))
-                        .clipShape(Circle())
-                        .overlay(Circle().stroke(Color.white.opacity(0.14), lineWidth: 1))
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("タイムラインを書き出し")
+                TimelineShareButton(playhead: playhead, sharePrefix: timelineSharePrefix)
             }
         }
         .frame(height: 54)
@@ -270,8 +280,8 @@ struct TimelineEditorView: View {
         .padding(.top, 4)
     }
 
-    private var timelineShareText: String {
-        "\(teamName(for: match.homeTeamID)) \(score(for: match.homeTeamID)) - \(score(for: match.awayTeamID)) \(teamName(for: match.awayTeamID)) / \(timeText(playheadTimelineSecond))"
+    private var timelineSharePrefix: String {
+        "\(teamName(for: match.homeTeamID)) \(score(for: match.homeTeamID)) - \(score(for: match.awayTeamID)) \(teamName(for: match.awayTeamID))"
     }
 
     private var editorSurface: some View {
@@ -339,13 +349,7 @@ struct TimelineEditorView: View {
     private func playbackControls(maxSeconds: Int) -> some View {
         ZStack {
             HStack(spacing: 8) {
-                HStack(spacing: 3) {
-                    Text(timeText(min(playheadTimelineSecond, Double(maxSeconds))))
-                        .foregroundStyle(Color.timelineHome)
-                    Text("/ \(timeText(maxSeconds))")
-                        .foregroundStyle(.white.opacity(0.52))
-                }
-                .font(.system(size: 18, weight: .bold).monospacedDigit())
+                TimelinePlayheadTimeLabel(playhead: playhead, maxSeconds: maxSeconds)
 
                 Spacer(minLength: 46)
 
@@ -460,6 +464,9 @@ struct TimelineEditorView: View {
                 hostWidth: renderedFrame.width,
                 contentVersion: timelineRulerContentVersion,
                 scrollOffset: $timelineScrollOffset,
+                onLiveScroll: { offset in
+                    syncPlayhead(fromLiveOffset: offset)
+                },
                 onViewportFrameChange: { _ in },
                 onRenderFrameChange: { renderOffset, viewportWidth in
                     updateTimelineRenderWindow(
@@ -499,6 +506,9 @@ struct TimelineEditorView: View {
                 hostWidth: renderedFrame.width,
                 contentVersion: timelineTracksContentVersion,
                 scrollOffset: $timelineScrollOffset,
+                onLiveScroll: { offset in
+                    syncPlayhead(fromLiveOffset: offset)
+                },
                 onViewportFrameChange: { frame in
                     if timelineViewportFrame != frame {
                         timelineViewportFrame = frame
@@ -802,6 +812,9 @@ struct TimelineEditorView: View {
                     hostWidth: renderedFrame.width,
                     contentVersion: timelineTracksContentVersion,
                     scrollOffset: $timelineScrollOffset,
+                    onLiveScroll: { offset in
+                        syncPlayhead(fromLiveOffset: offset)
+                    },
                     onViewportFrameChange: { frame in
                         if timelineViewportFrame != frame {
                             timelineViewportFrame = frame
@@ -1774,14 +1787,16 @@ struct TimelineEditorView: View {
     private func advanceTimelineAutoScroll(direction: Int, maxSeconds: Int, step: CGFloat) {
         guard direction != 0 else { return }
         let contentWidth = timelineContentWidth(maxSeconds: maxSeconds)
-        let previousOffset = timelineScrollOffset
-        timelineScrollOffset = clampedTimelineScrollOffset(
-            timelineScrollOffset + CGFloat(direction) * step,
+        let previousOffset = playhead.liveScrollOffset
+        let nextOffset = clampedTimelineScrollOffset(
+            previousOffset + CGFloat(direction) * step,
             contentWidth: contentWidth,
             viewportWidth: timelineViewportFrame.width
         )
+        playhead.liveScrollOffset = nextOffset
+        timelineScrollOffset = nextOffset
 
-        let pixelDelta = timelineScrollOffset - previousOffset
+        let pixelDelta = nextOffset - previousOffset
         if pixelDelta != 0 {
             timelineAutoScrollAccumulatedPixels += pixelDelta
         }
@@ -1835,7 +1850,7 @@ struct TimelineEditorView: View {
     private func startTimelinePlayback(maxSeconds: Int) {
         timelinePlaybackTask?.cancel()
         isTimelinePlaying = true
-        let playbackStartSecond = min(playheadTimelineSecond, Double(maxSeconds))
+        let playbackStartSecond = min(playhead.second, Double(maxSeconds))
         let playbackStartDate = Date()
         timelinePlaybackTask = Task { @MainActor in
             while !Task.isCancelled {
@@ -1864,8 +1879,8 @@ struct TimelineEditorView: View {
         guard abs(timelineAvailableViewportWidth - viewportWidth) > 0.5 else { return }
         timelineAvailableViewportWidth = viewportWidth
         isTimelineOverviewMode = true
-        timelineScrollOffset = 0
-        playheadTimelineSecond = 0
+        updateTimelineScrollOffsetFromPlayhead(0)
+        playhead.second = 0
         refreshTimelineRenderWindow(
             for: timelinePresentation,
             version: timelinePresentationVersion
@@ -1874,7 +1889,7 @@ struct TimelineEditorView: View {
 
     private func nudgePlayhead(by delta: Double, maxSeconds: Int) {
         stopTimelinePlayback()
-        scrollToTimelineSecond(playheadTimelineSecond + delta, maxSeconds: maxSeconds)
+        scrollToTimelineSecond(playhead.second + delta, maxSeconds: maxSeconds)
     }
 
     private func scrollToTimelineSecond(_ second: Int, maxSeconds: Int? = nil) {
@@ -1888,7 +1903,7 @@ struct TimelineEditorView: View {
         let viewportWidth = max(timelineRenderedViewportWidth, timelineViewportFrame.width)
         let targetX = xOffset(for: clampedSecond, maxSeconds: maxSeconds, contentWidth: contentWidth)
 
-        playheadTimelineSecond = clampedSecond
+        playhead.second = clampedSecond
         guard viewportWidth > 0 else { return }
 
         updateTimelineScrollOffsetFromPlayhead(
@@ -1901,23 +1916,32 @@ struct TimelineEditorView: View {
     }
 
     private func updateTimelineScrollOffsetFromPlayhead(_ offset: CGFloat) {
-        isTimelineScrollSyncSuppressed = true
+        playhead.programmaticTargetOffset = offset
+        playhead.liveScrollOffset = offset
         timelineScrollOffset = offset
-        Task { @MainActor in
-            await Task.yield()
-            isTimelineScrollSyncSuppressed = false
-        }
     }
 
-    private func syncPlayheadWithScroll() {
+    // スクロールビューが動いたときに再生ヘッドの時刻を追従させる。
+    // 再生ヘッド起点で動かしたスクロールが返ってきただけの場合は何もしない
+    // (時刻がスクロール位置から逆算されて微妙にズレるのを防ぐ)。
+    private func syncPlayhead(fromLiveOffset offset: CGFloat) {
+        playhead.liveScrollOffset = offset
+
+        if let target = playhead.programmaticTargetOffset {
+            if abs(offset - target) <= 1.0 {
+                return
+            }
+            playhead.programmaticTargetOffset = nil
+        }
+
         let maxSeconds = timelinePresentation.maxSeconds
         let contentWidth = timelineContentWidth(maxSeconds: maxSeconds)
         let viewportWidth = max(timelineRenderedViewportWidth, timelineViewportFrame.width)
         guard viewportWidth > 0 else { return }
 
-        let markerX = min(contentWidth, max(0, timelineScrollOffset + viewportWidth / 2))
+        let markerX = min(contentWidth, max(0, offset + viewportWidth / 2))
         let second = Double(timelineSecond(forContentX: markerX, maxSeconds: maxSeconds, contentWidth: contentWidth))
-        playheadTimelineSecond = min(max(0, second), Double(maxSeconds))
+        playhead.second = min(max(0, second), Double(maxSeconds))
     }
 
     private func positionInitialPlayheadIfNeeded(maxSeconds: Int, contentWidth: CGFloat) {
@@ -1927,8 +1951,8 @@ struct TimelineEditorView: View {
 
         didSetInitialPlayheadPosition = true
         isTimelineOverviewMode = true
-        playheadTimelineSecond = 0
-        timelineScrollOffset = 0
+        playhead.second = 0
+        updateTimelineScrollOffsetFromPlayhead(0)
     }
 
     private var pointsPerSecond: CGFloat {
@@ -2878,6 +2902,41 @@ private struct PreviewPlayerMarker: Identifiable {
     let isHome: Bool
 }
 
+// 再生ヘッド時刻の表示。この部品だけが毎フレームの時刻更新を受け取る。
+private struct TimelinePlayheadTimeLabel: View {
+    @ObservedObject var playhead: TimelinePlayheadState
+    let maxSeconds: Int
+
+    var body: some View {
+        HStack(spacing: 3) {
+            Text(timelinePlayheadTimeText(min(playhead.second, Double(maxSeconds))))
+                .foregroundStyle(Color.timelineHome)
+            Text("/ \(String(format: "%02d:%02d", maxSeconds / 60, maxSeconds % 60))")
+                .foregroundStyle(.white.opacity(0.52))
+        }
+        .font(.system(size: 18, weight: .bold).monospacedDigit())
+    }
+}
+
+private struct TimelineShareButton: View {
+    @ObservedObject var playhead: TimelinePlayheadState
+    let sharePrefix: String
+
+    var body: some View {
+        ShareLink(item: "\(sharePrefix) / \(timelinePlayheadTimeText(playhead.second))") {
+            Image(systemName: "square.and.arrow.up")
+                .font(.headline.weight(.bold))
+                .foregroundStyle(.white)
+                .frame(width: 40, height: 40)
+                .background(Color.white.opacity(0.10))
+                .clipShape(Circle())
+                .overlay(Circle().stroke(Color.white.opacity(0.14), lineWidth: 1))
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("タイムラインを書き出し")
+    }
+}
+
 private struct TimelineNativeScrollViewport<Content: View>: UIViewRepresentable {
     let contentWidth: CGFloat
     let viewportHeight: CGFloat
@@ -2886,6 +2945,7 @@ private struct TimelineNativeScrollViewport<Content: View>: UIViewRepresentable 
     let hostWidth: CGFloat
     let contentVersion: Int
     @Binding var scrollOffset: CGFloat
+    let onLiveScroll: (CGFloat) -> Void
     let onViewportFrameChange: (CGRect) -> Void
     let onRenderFrameChange: (CGFloat, CGFloat) -> Void
     let content: () -> Content
@@ -2898,6 +2958,7 @@ private struct TimelineNativeScrollViewport<Content: View>: UIViewRepresentable 
         hostWidth: CGFloat,
         contentVersion: Int,
         scrollOffset: Binding<CGFloat>,
+        onLiveScroll: @escaping (CGFloat) -> Void,
         onViewportFrameChange: @escaping (CGRect) -> Void,
         onRenderFrameChange: @escaping (CGFloat, CGFloat) -> Void,
         @ViewBuilder content: @escaping () -> Content
@@ -2909,6 +2970,7 @@ private struct TimelineNativeScrollViewport<Content: View>: UIViewRepresentable 
         self.hostWidth = hostWidth
         self.contentVersion = contentVersion
         _scrollOffset = scrollOffset
+        self.onLiveScroll = onLiveScroll
         self.onViewportFrameChange = onViewportFrameChange
         self.onRenderFrameChange = onRenderFrameChange
         self.content = content
@@ -3010,25 +3072,34 @@ private struct TimelineNativeScrollViewport<Content: View>: UIViewRepresentable 
             if abs(scrollView.contentOffset.x - clampedOffset) > 0.5 {
                 scrollView.setContentOffset(CGPoint(x: clampedOffset, y: scrollView.contentOffset.y), animated: false)
             }
-            parent.scrollOffset = clampedOffset
+            // スクロール中は SwiftUI の状態(@State)に書き込まない。
+            // 書き込むと毎フレーム画面全体が再計算されてカクつく。
+            parent.onLiveScroll(clampedOffset)
             reportRenderWindow(scrollView, force: false)
         }
 
         func scrollViewDidEndDragging(_ scrollView: UIScrollView, willDecelerate decelerate: Bool) {
-            parent.scrollOffset = clampedContentOffset(in: scrollView)
+            commitScrollOffset(scrollView)
             if !decelerate {
                 reportRenderWindow(scrollView, force: true)
             }
         }
 
         func scrollViewDidEndDecelerating(_ scrollView: UIScrollView) {
-            parent.scrollOffset = clampedContentOffset(in: scrollView)
+            commitScrollOffset(scrollView)
             reportRenderWindow(scrollView, force: true)
         }
 
         func scrollViewDidEndScrollingAnimation(_ scrollView: UIScrollView) {
-            parent.scrollOffset = clampedContentOffset(in: scrollView)
+            commitScrollOffset(scrollView)
             reportRenderWindow(scrollView, force: true)
+        }
+
+        // スクロールが止まったときだけ、最終位置を SwiftUI 側に反映する
+        private func commitScrollOffset(_ scrollView: UIScrollView) {
+            let offset = clampedContentOffset(in: scrollView)
+            parent.scrollOffset = offset
+            parent.onLiveScroll(offset)
         }
 
         func reportViewport(_ scrollView: UIScrollView) {
