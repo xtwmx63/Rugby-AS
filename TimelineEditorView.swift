@@ -3468,13 +3468,17 @@ private struct TimelineEventBlockView: View, Equatable {
     }
 
     private var dragGesture: some Gesture {
-        LongPressGesture(minimumDuration: 0.28)
+        LongPressGesture(minimumDuration: 0.16)
             .sequenced(before: DragGesture(minimumDistance: 0, coordinateSpace: .global))
             .updating($dragState) { value, state, _ in
                 switch value {
                 case .first(true):
                     state = .pressing
                 case .second(true, let drag):
+                    // 長押しが成立してブロックが持ち上がった瞬間に一度だけ振動させる
+                    if state == .pressing, drag == nil {
+                        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                    }
                     state = .dragging(drag?.translation.width ?? 0)
                 default:
                     state = .inactive
