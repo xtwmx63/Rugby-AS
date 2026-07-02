@@ -462,7 +462,7 @@ struct TimelineEditorView: View {
                 renderBucketWidth: timelineRenderBucketWidth,
                 hostOrigin: renderedFrame.origin,
                 hostWidth: renderedFrame.width,
-                contentVersion: timelineRulerContentVersion,
+                contentVersion: timelineRulerContentVersion(contentWidth: contentWidth, renderedFrame: renderedFrame),
                 scrollOffset: $timelineScrollOffset,
                 onLiveScroll: { offset in
                     syncPlayhead(fromLiveOffset: offset)
@@ -504,7 +504,7 @@ struct TimelineEditorView: View {
                 renderBucketWidth: timelineRenderBucketWidth,
                 hostOrigin: renderedFrame.origin,
                 hostWidth: renderedFrame.width,
-                contentVersion: timelineTracksContentVersion,
+                contentVersion: timelineTracksContentVersion(contentWidth: contentWidth, renderedFrame: renderedFrame),
                 scrollOffset: $timelineScrollOffset,
                 onLiveScroll: { offset in
                     syncPlayhead(fromLiveOffset: offset)
@@ -810,7 +810,7 @@ struct TimelineEditorView: View {
                     renderBucketWidth: timelineRenderBucketWidth,
                     hostOrigin: renderedFrame.origin,
                     hostWidth: renderedFrame.width,
-                    contentVersion: timelineTracksContentVersion,
+                    contentVersion: timelineTracksContentVersion(contentWidth: contentWidth, renderedFrame: renderedFrame),
                     scrollOffset: $timelineScrollOffset,
                     onLiveScroll: { offset in
                         syncPlayhead(fromLiveOffset: offset)
@@ -1245,15 +1245,26 @@ struct TimelineEditorView: View {
 
     // スクロール中の作り直しを避けるため「中身が変わったか」を1つの数値で表す。
     // この値が変わったときだけ TimelineNativeScrollViewport が中身を更新する。
-    private var timelineRulerContentVersion: Int {
+    // ズーム中は contentWidth が毎フレーム変わるので、必ず現在値を含める
+    // (含めないとズームしても描画が古い縮尺のまま止まる)。
+    private func timelineRulerContentVersion(
+        contentWidth: CGFloat,
+        renderedFrame: (origin: CGFloat, width: CGFloat)
+    ) -> Int {
         var hasher = Hasher()
         hasher.combine(timelineRenderWindow.key)
+        hasher.combine(Int((contentWidth * 2).rounded()))
+        hasher.combine(Int((renderedFrame.origin * 2).rounded()))
+        hasher.combine(Int((renderedFrame.width * 2).rounded()))
         return hasher.finalize()
     }
 
-    private var timelineTracksContentVersion: Int {
+    private func timelineTracksContentVersion(
+        contentWidth: CGFloat,
+        renderedFrame: (origin: CGFloat, width: CGFloat)
+    ) -> Int {
         var hasher = Hasher()
-        hasher.combine(timelineRenderWindow.key)
+        hasher.combine(timelineRulerContentVersion(contentWidth: contentWidth, renderedFrame: renderedFrame))
         hasher.combine(selectedTimelineEventID)
         hasher.combine(timelineAutoScrollAccumulatedPixels)
         return hasher.finalize()
