@@ -1957,6 +1957,12 @@ private struct TimelineHorizontalOffsetScrollView<Content: View>: UIViewRepresen
     }
 
     func updateUIView(_ scrollView: UIScrollView, context: Context) {
+        // この中で setContentOffset 等を行うと delegate が同期的に呼ばれる。
+        // 「SwiftUIの画面更新中に状態を変更」する警告(未定義動作)を防ぐため、
+        // 更新中フラグを立てて delegate 側の状態書き込みを遅延させる。
+        context.coordinator.isPerformingViewUpdate = true
+        defer { context.coordinator.isPerformingViewUpdate = false }
+
         let contentKey = hostedContentKey
         if context.coordinator.lastHostedContentKey != contentKey {
             context.coordinator.host?.rootView = hostedContent
@@ -1995,6 +2001,9 @@ private struct TimelineHorizontalOffsetScrollView<Content: View>: UIViewRepresen
         var host: UIHostingController<AnyView>?
         var widthConstraint: NSLayoutConstraint?
         var lastHostedContentKey: HostedContentKey?
+        // updateUIView 実行中(=SwiftUIの画面更新中)は true。
+        // この間の状態書き込みは次のタイミングへ遅らせる。
+        var isPerformingViewUpdate = false
 
         init(offset: Binding<CGFloat>, isTracking: Binding<Bool>) {
             _offset = offset
@@ -2002,21 +2011,38 @@ private struct TimelineHorizontalOffsetScrollView<Content: View>: UIViewRepresen
         }
 
         func scrollViewWillBeginDragging(_ scrollView: UIScrollView) {
-            isTracking = true
+            setIsTracking(true)
         }
 
         func scrollViewDidScroll(_ scrollView: UIScrollView) {
-            offset = scrollView.contentOffset.x
+            if isPerformingViewUpdate {
+                DispatchQueue.main.async { [weak self, weak scrollView] in
+                    guard let self, let scrollView else { return }
+                    self.offset = scrollView.contentOffset.x
+                }
+            } else {
+                offset = scrollView.contentOffset.x
+            }
         }
 
         func scrollViewDidEndDragging(_ scrollView: UIScrollView, willDecelerate decelerate: Bool) {
             if !decelerate {
-                isTracking = false
+                setIsTracking(false)
             }
         }
 
         func scrollViewDidEndDecelerating(_ scrollView: UIScrollView) {
-            isTracking = false
+            setIsTracking(false)
+        }
+
+        private func setIsTracking(_ value: Bool) {
+            if isPerformingViewUpdate {
+                DispatchQueue.main.async { [weak self] in
+                    self?.isTracking = value
+                }
+            } else {
+                isTracking = value
+            }
         }
     }
 }
@@ -6304,6 +6330,11 @@ private struct TimelineNativeScrollViewport<Content: View>: UIViewRepresentable 
     }
 
     func updateUIView(_ scrollView: UIScrollView, context: Context) {
+        // setContentOffset 等で delegate が同期的に呼ばれても
+        // SwiftUI の画面更新中に状態を書き換えないようにするフラグ
+        context.coordinator.isPerformingViewUpdate = true
+        defer { context.coordinator.isPerformingViewUpdate = false }
+
         context.coordinator.parent = self
         let contentKey = hostedContentKey
         if context.coordinator.lastHostedContentKey != contentKey {
@@ -6351,6 +6382,9 @@ private struct TimelineNativeScrollViewport<Content: View>: UIViewRepresentable 
         var parent: TimelineNativeScrollViewport<Content>
         var host: UIHostingController<AnyView>?
         var lastHostedContentKey: HostedContentKey?
+        // updateUIView 実行中(=SwiftUIの画面更新中)は true。
+        // この間の状態書き込みは次のタイミングへ遅らせる。
+        var isPerformingViewUpdate = false
         private var lastRenderOffset: CGFloat = -.greatestFiniteMagnitude
         private var lastViewportWidth: CGFloat = -.greatestFiniteMagnitude
 
@@ -6376,25 +6410,37 @@ private struct TimelineNativeScrollViewport<Content: View>: UIViewRepresentable 
             if abs(scrollView.contentOffset.x - clampedOffset) > 0.5 {
                 scrollView.setContentOffset(CGPoint(x: clampedOffset, y: scrollView.contentOffset.y), animated: false)
             }
-            parent.scrollOffset = clampedOffset
+            writeScrollOffset(from: scrollView)
             reportRenderWindow(scrollView, force: false)
         }
 
         func scrollViewDidEndDragging(_ scrollView: UIScrollView, willDecelerate decelerate: Bool) {
-            parent.scrollOffset = clampedContentOffset(in: scrollView)
+            writeScrollOffset(from: scrollView)
             if !decelerate {
                 reportRenderWindow(scrollView, force: true)
             }
         }
 
         func scrollViewDidEndDecelerating(_ scrollView: UIScrollView) {
-            parent.scrollOffset = clampedContentOffset(in: scrollView)
+            writeScrollOffset(from: scrollView)
             reportRenderWindow(scrollView, force: true)
         }
 
         func scrollViewDidEndScrollingAnimation(_ scrollView: UIScrollView) {
-            parent.scrollOffset = clampedContentOffset(in: scrollView)
+            writeScrollOffset(from: scrollView)
             reportRenderWindow(scrollView, force: true)
+        }
+
+        // SwiftUIの画面更新中なら、スクロール位置の反映を次のタイミングへ遅らせる
+        private func writeScrollOffset(from scrollView: UIScrollView) {
+            if isPerformingViewUpdate {
+                DispatchQueue.main.async { [weak self, weak scrollView] in
+                    guard let self, let scrollView else { return }
+                    self.parent.scrollOffset = self.clampedContentOffset(in: scrollView)
+                }
+            } else {
+                parent.scrollOffset = clampedContentOffset(in: scrollView)
+            }
         }
 
         func reportViewport(_ scrollView: UIScrollView) {
@@ -6403,6 +6449,15 @@ private struct TimelineNativeScrollViewport<Content: View>: UIViewRepresentable 
         }
 
         func reportRenderWindow(_ scrollView: UIScrollView, force: Bool) {
+            // このコールバックの先でも SwiftUI の状態を書き換えるので、
+            // 画面更新中に呼ばれた場合は次のタイミングへ遅らせる
+            guard !isPerformingViewUpdate else {
+                DispatchQueue.main.async { [weak self, weak scrollView] in
+                    guard let self, let scrollView else { return }
+                    self.reportRenderWindow(scrollView, force: force)
+                }
+                return
+            }
             let viewportWidth = max(0, scrollView.bounds.width)
             guard viewportWidth > 0 else { return }
             let renderOffset = bucketedOffset(scrollView.contentOffset.x)
