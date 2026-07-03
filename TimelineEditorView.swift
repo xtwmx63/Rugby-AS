@@ -85,6 +85,17 @@ enum TimelineTrackType: String, CaseIterable, Identifiable, Hashable {
         self != .deleteTool
     }
 
+    // 左のラベルをタップして「その行のクリップだけを連続再生」できる行。
+    // VIDEO/MATCH は場面の行ではないので対象外。
+    var supportsSequentialPlayback: Bool {
+        switch self {
+        case .home, .away, .bip, .tryEvent, .conv, .pg, .dg, .lo, .scr:
+            return true
+        case .video, .match, .deleteTool:
+            return false
+        }
+    }
+
     static let timelineTracks: [TimelineTrackType] = [
         .video, .match, .home, .away, .bip, .tryEvent, .conv, .pg, .dg, .lo, .scr
     ]
@@ -531,6 +542,10 @@ struct TimelineEditorView: View {
     @State private var isScrubbingTimeline = false
     @State private var isMatchClockSettingsPresented = false
     @State private var matchClockSettings: TimelineMatchClockSettings = .standard
+    // トラック連続再生: 選択中の行と、再生する区間のリスト・現在位置
+    @State private var selectedPlaybackTrack: TimelineTrackType?
+    @State private var playbackQueue: [(start: Double, end: Double)] = []
+    @State private var playbackQueueIndex = 0
 
     let match: Match?
 
@@ -655,11 +670,15 @@ struct TimelineEditorView: View {
                         viewModel: viewModel,
                         timelineScrollOffset: $timelineScrollOffset,
                         isScrubbingTimeline: $isScrubbingTimeline,
+                        selectedPlaybackTrack: selectedPlaybackTrack,
                         onSelectVideoSegment: { segment in
                             selectVideoSegment(segment, autoplay: false)
                         },
                         onAddClipForTrack: { trackType in
                             handleToolTap(trackType)
+                        },
+                        onTrackLabelTap: { trackType in
+                            toggleSequentialPlayback(for: trackType)
                         },
                         onAdjustSelectedStart: { delta in
                             adjustSelectedClipStart(by: delta)
@@ -1323,10 +1342,119 @@ struct TimelineEditorView: View {
         let clampedTime = min(max(0, time), viewModel.videoDuration)
         guard abs(viewModel.currentVideoTime - clampedTime) > 0.05 else { return }
 
+        // 指でスクラブしたら連続再生モードは解除して通常操作に戻す
+        clearSequentialPlayback()
+
         viewModel.currentVideoTime = clampedTime
         videoPlayer?.pause()
         viewModel.isPlaying = false
         seekPlayerToCurrentTime(selectingSegmentAtCurrentTime: true)
+    }
+
+    // ===== トラック連続再生 =====
+    // 左のラベル(HOME など)をタップすると、その行のクリップ区間だけを
+    // 時系列順に動画で連続再生する。区間の合間は自動でスキップ。
+
+    private func toggleSequentialPlayback(for trackType: TimelineTrackType) {
+        if selectedPlaybackTrack == trackType {
+            clearSequentialPlayback()
+            videoPlayer?.pause()
+            viewModel.isPlaying = false
+            return
+        }
+
+        let queue = sequentialPlaybackQueue(for: trackType)
+        guard !queue.isEmpty else {
+            editorErrorMessage = "\(trackType.title) のクリップがまだありません。"
+            return
+        }
+        // 動画が重なっている最初の区間から始める
+        guard let firstIndex = queue.firstIndex(where: { playableVideoSegment(at: $0.start) != nil }) else {
+            editorErrorMessage = "\(trackType.title) のクリップに重なる動画がありません。"
+            return
+        }
+
+        selectedPlaybackTrack = trackType
+        playbackQueue = queue
+        playbackQueueIndex = firstIndex
+        jumpPlayback(to: queue[firstIndex].start, keepPlaying: true)
+    }
+
+    private func clearSequentialPlayback() {
+        selectedPlaybackTrack = nil
+        playbackQueue = []
+        playbackQueueIndex = 0
+    }
+
+    // その行のクリップを時系列順に並べ、重なる・つながる区間は1つにまとめる
+    private func sequentialPlaybackQueue(for trackType: TimelineTrackType) -> [(start: Double, end: Double)] {
+        let clips = viewModel.timelineClips
+            .filter { $0.trackType == trackType && $0.endTime > $0.startTime }
+            .sorted { $0.startTime < $1.startTime }
+
+        var merged: [(start: Double, end: Double)] = []
+        for clip in clips {
+            if let last = merged.last, clip.startTime <= last.end + 0.5 {
+                merged[merged.count - 1].end = max(last.end, clip.endTime)
+            } else {
+                merged.append((clip.startTime, clip.endTime))
+            }
+        }
+        return merged
+    }
+
+    // 再生を続けたまま、タイムライン上の指定時刻へ動画を飛ばす
+    private func jumpPlayback(to time: Double, keepPlaying: Bool) {
+        let clampedTime = min(max(0, time), viewModel.videoDuration)
+        viewModel.currentVideoTime = clampedTime
+
+        guard let segment = playableVideoSegment(at: clampedTime) else { return }
+
+        if activeVideoSegmentID != segment.id || videoPlayer == nil {
+            viewModel.selectVideoSegment(segment.id)
+            configurePlayer(for: segment, autoplay: keepPlaying)
+        } else {
+            let localTime = min(max(0, clampedTime - segment.startTime), max(0, segment.endTime - segment.startTime))
+            videoPlayer?.seek(
+                to: CMTime(seconds: localTime, preferredTimescale: 600),
+                toleranceBefore: .zero,
+                toleranceAfter: .zero
+            )
+            if keepPlaying {
+                videoPlayer?.play()
+                viewModel.isPlaying = true
+            }
+        }
+    }
+
+    // 再生位置が今の区間の終わりまで来たら、次の区間へ自動で飛ぶ。
+    // 動画の時間監視(0.2秒ごと)から呼ばれる。
+    private func checkSequentialPlaybackProgress() {
+        guard selectedPlaybackTrack != nil,
+              viewModel.isPlaying,
+              playbackQueueIndex < playbackQueue.count else {
+            return
+        }
+        let current = playbackQueue[playbackQueueIndex]
+        guard viewModel.currentVideoTime >= current.end - 0.1 else { return }
+
+        var nextIndex = playbackQueueIndex + 1
+        // 動画が重なっていない区間は飛ばす
+        while nextIndex < playbackQueue.count,
+              playableVideoSegment(at: playbackQueue[nextIndex].start) == nil {
+            nextIndex += 1
+        }
+
+        guard nextIndex < playbackQueue.count else {
+            // 最後の区間まで見終わったら停止して選択も解除
+            videoPlayer?.pause()
+            viewModel.isPlaying = false
+            clearSequentialPlayback()
+            return
+        }
+
+        playbackQueueIndex = nextIndex
+        jumpPlayback(to: playbackQueue[nextIndex].start, keepPlaying: true)
     }
 
     private func seekPlayerToCurrentTime(selectingSegmentAtCurrentTime: Bool) {
@@ -1418,6 +1546,7 @@ struct TimelineEditorView: View {
             guard seconds.isFinite else { return }
             Task { @MainActor in
                 viewModel.currentVideoTime = min(viewModel.videoDuration, segment.startTime + seconds)
+                checkSequentialPlaybackProgress()
             }
         }
     }
@@ -1662,8 +1791,10 @@ struct TimelineTracksView: View {
     @ObservedObject var viewModel: TimelineEditorViewModel
     @Binding var timelineScrollOffset: CGFloat
     @Binding var isScrubbingTimeline: Bool
+    var selectedPlaybackTrack: TimelineTrackType?
     var onSelectVideoSegment: (VideoSegment) -> Void
     var onAddClipForTrack: (TimelineTrackType) -> Void
+    var onTrackLabelTap: (TimelineTrackType) -> Void
     var onAdjustSelectedStart: (Double) -> Void
     var onAdjustSelectedEnd: (Double) -> Void
     var onTimelineTimeChanged: (Double) -> Void
@@ -1760,13 +1891,19 @@ struct TimelineTracksView: View {
                         HStack(spacing: 0) {
                             VStack(spacing: 0) {
                                 ForEach(viewModel.visibleTracks) { trackType in
-                                    TimelineTrackLabelView(trackType: trackType)
-                                        .frame(width: labelWidth, height: rowHeight)
-                                        .overlay(alignment: .bottom) {
-                                            Rectangle()
-                                                .fill(Color.white.opacity(0.07))
-                                                .frame(height: 1)
-                                        }
+                                    TimelineTrackLabelView(
+                                        trackType: trackType,
+                                        isSelected: selectedPlaybackTrack == trackType,
+                                        onTap: trackType.supportsSequentialPlayback
+                                            ? { onTrackLabelTap(trackType) }
+                                            : nil
+                                    )
+                                    .frame(width: labelWidth, height: rowHeight)
+                                    .overlay(alignment: .bottom) {
+                                        Rectangle()
+                                            .fill(Color.white.opacity(0.07))
+                                            .frame(height: 1)
+                                    }
                                 }
                             }
 
@@ -2338,9 +2475,11 @@ struct TimelineTrackRowView: View {
 
 private struct TimelineTrackLabelView: View {
     var trackType: TimelineTrackType
+    var isSelected: Bool = false
+    var onTap: (() -> Void)? = nil
 
     var body: some View {
-        HStack(spacing: 8) {
+        let label = HStack(spacing: 8) {
             Image(systemName: trackType.systemImage)
                 .font(.system(size: 21, weight: .bold))
                 .foregroundStyle(trackType.color)
@@ -2348,7 +2487,7 @@ private struct TimelineTrackLabelView: View {
 
             Text(trackType.title)
                 .font(.system(size: 12, weight: .bold, design: .rounded))
-                .foregroundStyle(Color.white.opacity(0.66))
+                .foregroundStyle(Color.white.opacity(isSelected ? 0.95 : 0.66))
                 .lineLimit(1)
                 .minimumScaleFactor(0.78)
 
@@ -2356,6 +2495,25 @@ private struct TimelineTrackLabelView: View {
         }
         .padding(.leading, 10)
         .padding(.trailing, 6)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .contentShape(Rectangle())
+        .background(isSelected ? trackType.color.opacity(0.24) : Color.clear)
+        .overlay(alignment: .leading) {
+            if isSelected {
+                Rectangle()
+                    .fill(trackType.color)
+                    .frame(width: 3)
+            }
+        }
+
+        if let onTap {
+            Button(action: onTap) {
+                label
+            }
+            .buttonStyle(.plain)
+        } else {
+            label
+        }
     }
 }
 
