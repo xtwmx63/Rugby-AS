@@ -24,6 +24,11 @@ private final class TimelinePlayheadState: ObservableObject {
     // 再生ヘッド起点で動かしたスクロールの目標位置。
     // ここと一致している間は「ユーザーが指で動かした」扱いにしない。
     var programmaticTargetOffset: CGFloat?
+
+    // トラック連続再生用: 再生する区間のリスト（試合時間の秒）と現在の区間番号。
+    // nil のときは通常の全体再生。
+    var playbackSegments: [(start: Double, end: Double)]?
+    var playbackSegmentIndex = 0
 }
 
 // 再生ヘッド時刻の表示形式(分:秒.1/10秒)
@@ -81,6 +86,12 @@ struct TimelineEditorView: View {
     @State private var isVideoFileImporterPresented = false
     @State private var isImportingVideo = false
     @State private var isVideoAlignmentPresented = false
+    @State private var selectedPlaybackTrackID: String?
+
+    // TRYなど一瞬のイベントを動画で見るときの前後の余白（秒）。
+    // 設定画面はまだないが、あとから変えられるよう端末設定(UserDefaults)に持つ。
+    @AppStorage("eventClipPrerollSeconds") private var eventClipPrerollSeconds = 10
+    @AppStorage("eventClipPostrollSeconds") private var eventClipPostrollSeconds = 5
 
     private let minimumTimelineZoom: CGFloat = 0.035
     private let maximumTimelineZoom: CGFloat = 10.0
@@ -680,25 +691,7 @@ struct TimelineEditorView: View {
     private func timelineTrackLabels(rowsHeight: CGFloat) -> some View {
         VStack(alignment: .leading, spacing: 0) {
             ForEach(trackDefinitions) { track in
-                HStack(spacing: 8) {
-                    Image(systemName: track.systemImage)
-                        .font(.title3.weight(.black))
-                        .foregroundStyle(track.color)
-                        .frame(width: 24)
-
-                    Text(trackDisplayTitle(track))
-                        .font(.caption.weight(.bold))
-                        .foregroundStyle(.white.opacity(0.64))
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.58)
-                }
-                .frame(width: timelineTrackLabelWidth, height: timelineTrackRowHeight, alignment: .leading)
-                .padding(.leading, 10)
-                .overlay(alignment: .top) {
-                    Rectangle()
-                        .fill(Color.white.opacity(0.055))
-                        .frame(height: 1)
-                }
+                timelineTrackLabelButton(track)
             }
         }
         .frame(width: timelineTrackLabelWidth, height: rowsHeight, alignment: .topLeading)
@@ -707,6 +700,45 @@ struct TimelineEditorView: View {
             Rectangle()
                 .fill(Color.white.opacity(0.08))
                 .frame(width: 1)
+        }
+    }
+
+    // トラック名のボタン。タップでそのトラックの場面だけを連続再生する。
+    private func timelineTrackLabelButton(_ track: TimelineTrackDefinition) -> some View {
+        let isSelected = selectedPlaybackTrackID == track.id
+
+        return Button {
+            togglePlaybackTrack(track.id)
+        } label: {
+            HStack(spacing: 8) {
+                Image(systemName: track.systemImage)
+                    .font(.title3.weight(.black))
+                    .foregroundStyle(track.color)
+                    .frame(width: 24)
+
+                Text(trackDisplayTitle(track))
+                    .font(.caption.weight(.bold))
+                    .foregroundStyle(.white.opacity(isSelected ? 0.95 : 0.64))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.58)
+            }
+            .frame(width: timelineTrackLabelWidth, height: timelineTrackRowHeight, alignment: .leading)
+            .padding(.leading, 10)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .background(isSelected ? track.color.opacity(0.22) : Color.clear)
+        .overlay(alignment: .leading) {
+            if isSelected {
+                Rectangle()
+                    .fill(track.color)
+                    .frame(width: 3)
+            }
+        }
+        .overlay(alignment: .top) {
+            Rectangle()
+                .fill(Color.white.opacity(0.055))
+                .frame(height: 1)
         }
     }
 
@@ -2101,6 +2133,78 @@ struct TimelineEditorView: View {
         }
     }
 
+    // ===== トラック連続再生の区間づくり =====
+
+    // トラックを選ぶ/解除する。選ぶと、そのトラックの場面を頭から連続再生する。
+    private func togglePlaybackTrack(_ trackID: String) {
+        stopTimelinePlayback()
+        if selectedPlaybackTrackID == trackID {
+            selectedPlaybackTrackID = nil
+            return
+        }
+        selectedPlaybackTrackID = trackID
+        let segments = playbackSegments(for: trackID)
+        guard let first = segments.first else { return }
+        scrollToTimelineSecond(first.start)
+        startTimelinePlayback(maxSeconds: timelinePresentation.maxSeconds)
+    }
+
+    // 選択中トラックのイベントを「再生する区間」のリストに変換する。
+    // 区間イベントは開始〜終了、一瞬のイベントは前後に余白を付け、
+    // 重なる区間は1つにまとめて時系列順に並べる。
+    private func playbackSegments(for trackID: String) -> [(start: Double, end: Double)] {
+        let maxSeconds = Double(timelinePresentation.maxSeconds)
+        let preroll = Double(max(0, eventClipPrerollSeconds))
+        let postroll = Double(max(1, eventClipPostrollSeconds))
+        let events = timelinePresentation.trackRenderEvents[trackID, default: []]
+
+        var clamped: [(start: Double, end: Double)] = []
+        for event in events {
+            var start: Double
+            var end: Double
+            if event.isDuration {
+                start = Double(event.startSeconds)
+                end = Double(event.startSeconds + max(1, event.durationSeconds))
+            } else {
+                start = Double(event.startSeconds) - preroll
+                end = Double(event.startSeconds) + postroll
+            }
+            start = max(0, start)
+            end = min(maxSeconds, max(0, end))
+            if end > start {
+                clamped.append((start, end))
+            }
+        }
+        clamped.sort { $0.start < $1.start }
+
+        var merged: [(start: Double, end: Double)] = []
+        for segment in clamped {
+            if let last = merged.last, segment.start <= last.end + 0.5 {
+                merged[merged.count - 1].end = max(last.end, segment.end)
+            } else {
+                merged.append(segment)
+            }
+        }
+        return merged
+    }
+
+    private func activePlaybackSegments() -> [(start: Double, end: Double)]? {
+        guard let trackID = selectedPlaybackTrackID else { return nil }
+        let segments = playbackSegments(for: trackID)
+        return segments.isEmpty ? nil : segments
+    }
+
+    // 今の再生ヘッド位置から再生を始めるべき区間を選ぶ
+    private func startSegmentIndex(
+        in segments: [(start: Double, end: Double)],
+        from second: Double
+    ) -> Int {
+        for (index, segment) in segments.enumerated() where second < segment.end - 0.05 {
+            return index
+        }
+        return 0
+    }
+
     // ===== 再生 =====
 
     private func toggleTimelinePlayback(maxSeconds: Int) {
@@ -2113,30 +2217,67 @@ struct TimelineEditorView: View {
 
     private func startTimelinePlayback(maxSeconds: Int) {
         stopTimelinePlayback()
+
+        let segments = activePlaybackSegments()
+        playhead.playbackSegments = segments
+        var startSecond = min(playhead.second, Double(maxSeconds))
+        if let segments {
+            let index = startSegmentIndex(in: segments, from: startSecond)
+            playhead.playbackSegmentIndex = index
+            let segment = segments[index]
+            if startSecond < segment.start || startSecond >= segment.end {
+                startSecond = segment.start
+            }
+        }
+
         if let url = attachedVideoURL() {
-            startVideoPlayback(url: url, maxSeconds: maxSeconds)
+            startVideoPlayback(url: url, startSecond: startSecond, maxSeconds: maxSeconds)
         } else {
-            startClockPlayback(maxSeconds: maxSeconds)
+            startClockPlayback(startSecond: startSecond, maxSeconds: maxSeconds)
         }
     }
 
     // 動画があるときの再生: 動画を進め、その時間にタイムラインを追従させる
-    private func startVideoPlayback(url: URL, maxSeconds: Int) {
+    private func startVideoPlayback(url: URL, startSecond: Double, maxSeconds: Int) {
         isTimelinePlaying = true
         videoController.load(url: url)
-        let startSecond = min(playhead.second, Double(maxSeconds))
+        scrollToTimelineSecond(startSecond, maxSeconds: maxSeconds)
         videoController.onTick = { videoSeconds in
-            handleVideoPlaybackTick(videoSeconds: videoSeconds)
+            handleVideoPlaybackTick(currentVideoSeconds: videoSeconds)
         }
         videoController.seek(toVideoSeconds: videoSeconds(forTimelineSecond: startSecond))
         videoController.startObserving()
         videoController.play()
     }
 
-    private func handleVideoPlaybackTick(videoSeconds: Double) {
+    private func handleVideoPlaybackTick(currentVideoSeconds: Double) {
         guard isTimelinePlaying else { return }
         let maxSeconds = timelinePresentation.maxSeconds
-        let second = timelineSecond(forVideoSeconds: videoSeconds)
+        let second = timelineSecond(forVideoSeconds: currentVideoSeconds)
+
+        // トラック連続再生中: 区間の終わりまで来たら次の区間へジャンプ
+        if let segments = playhead.playbackSegments {
+            let index = playhead.playbackSegmentIndex
+            guard index < segments.count else {
+                stopTimelinePlayback()
+                return
+            }
+            let segment = segments[index]
+            if second >= segment.end - 0.05 {
+                let nextIndex = index + 1
+                guard nextIndex < segments.count else {
+                    scrollToTimelineSecond(segment.end, maxSeconds: maxSeconds)
+                    stopTimelinePlayback()
+                    return
+                }
+                playhead.playbackSegmentIndex = nextIndex
+                let next = segments[nextIndex]
+                scrollToTimelineSecond(next.start, maxSeconds: maxSeconds)
+                videoController.seek(toVideoSeconds: videoSeconds(forTimelineSecond: next.start))
+                return
+            }
+        }
+
         guard second < Double(maxSeconds) else {
             scrollToTimelineSecond(Double(maxSeconds), maxSeconds: maxSeconds)
             stopTimelinePlayback()
@@ -2146,15 +2287,40 @@ struct TimelineEditorView: View {
     }
 
     // 動画がないときの再生: 実時間の時計でタイムラインだけを進める
-    private func startClockPlayback(maxSeconds: Int) {
+    private func startClockPlayback(startSecond: Double, maxSeconds: Int) {
         isTimelinePlaying = true
-        let playbackStartSecond = min(playhead.second, Double(maxSeconds))
-        let playbackStartDate = Date()
+        scrollToTimelineSecond(startSecond, maxSeconds: maxSeconds)
         timelinePlaybackTask = Task { @MainActor in
+            var baselineSecond = startSecond
+            var baselineDate = Date()
+
             while !Task.isCancelled {
                 let currentMaxSeconds = timelinePresentation.maxSeconds
-                let elapsedSeconds = Date().timeIntervalSince(playbackStartDate)
-                let currentSecond = min(playbackStartSecond + elapsedSeconds, Double(currentMaxSeconds))
+                var currentSecond = baselineSecond + Date().timeIntervalSince(baselineDate)
+
+                // トラック連続再生中: 区間の終わりまで来たら次の区間へジャンプ
+                if let segments = playhead.playbackSegments {
+                    let index = playhead.playbackSegmentIndex
+                    guard index < segments.count else {
+                        stopTimelinePlayback()
+                        break
+                    }
+                    let segment = segments[index]
+                    if currentSecond >= segment.end {
+                        let nextIndex = index + 1
+                        guard nextIndex < segments.count else {
+                            scrollToTimelineSecond(segment.end, maxSeconds: currentMaxSeconds)
+                            stopTimelinePlayback()
+                            break
+                        }
+                        playhead.playbackSegmentIndex = nextIndex
+                        baselineSecond = segments[nextIndex].start
+                        baselineDate = Date()
+                        currentSecond = baselineSecond
+                    }
+                }
+
+                currentSecond = min(currentSecond, Double(currentMaxSeconds))
                 scrollToTimelineSecond(currentSecond, maxSeconds: currentMaxSeconds)
 
                 guard currentSecond < Double(currentMaxSeconds) else {
@@ -2171,6 +2337,8 @@ struct TimelineEditorView: View {
         timelinePlaybackTask = nil
         videoController.pause()
         videoController.stopObserving()
+        playhead.playbackSegments = nil
+        playhead.playbackSegmentIndex = 0
         isTimelinePlaying = false
     }
 
