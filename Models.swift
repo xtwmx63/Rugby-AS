@@ -62,19 +62,32 @@ final class Match {
     var homeTeamID: UUID
     var awayTeamID: UUID
     var playedAt: Date
+    // 試合動画のファイル名（ドキュメントディレクトリの MatchVideos 配下）。nil で未設定。
+    var videoPath: String?
+    // 動画内で「前半キックオフ（前半0:00）」にあたる位置（秒）。nil は 0 扱い。
+    var videoFirstHalfKickoffSeconds: Double?
+    // 動画内で「後半キックオフ（後半0:00）」にあたる位置（秒）。
+    // nil のときは「前半キックオフ + 前半の長さ」で近似する（ハーフタイムなし想定）。
+    var videoSecondHalfKickoffSeconds: Double?
 
     init(
         id: UUID = UUID(),
         tournamentID: UUID,
         homeTeamID: UUID,
         awayTeamID: UUID,
-        playedAt: Date
+        playedAt: Date,
+        videoPath: String? = nil,
+        videoFirstHalfKickoffSeconds: Double? = nil,
+        videoSecondHalfKickoffSeconds: Double? = nil
     ) {
         self.id = id
         self.tournamentID = tournamentID
         self.homeTeamID = homeTeamID
         self.awayTeamID = awayTeamID
         self.playedAt = playedAt
+        self.videoPath = videoPath
+        self.videoFirstHalfKickoffSeconds = videoFirstHalfKickoffSeconds
+        self.videoSecondHalfKickoffSeconds = videoSecondHalfKickoffSeconds
     }
 }
 
