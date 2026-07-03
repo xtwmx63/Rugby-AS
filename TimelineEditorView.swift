@@ -538,6 +538,7 @@ struct TimelineEditorView: View {
     @State private var videoPlayer: AVPlayer?
     @State private var activeVideoSegmentID: UUID?
     @State private var playbackTimeObserver: Any?
+    @State private var videoEndObserver: NSObjectProtocol?
     @State private var timelineScrollOffset: CGFloat = 0
     @State private var isScrubbingTimeline = false
     @State private var isMatchClockSettingsPresented = false
@@ -1523,6 +1524,7 @@ struct TimelineEditorView: View {
             videoPlayer = player
             activeVideoSegmentID = segment.id
             addPlaybackObserver(to: player, segment: segment)
+            addVideoEndObserver(to: player)
         }
 
         let localTime = min(max(0, viewModel.currentVideoTime - segment.startTime), max(0, segment.endTime - segment.startTime))
@@ -1556,6 +1558,53 @@ struct TimelineEditorView: View {
             videoPlayer.removeTimeObserver(playbackTimeObserver)
         }
         playbackTimeObserver = nil
+        removeVideoEndObserver()
+    }
+
+    // ===== 動画ファイルの終端処理 =====
+    // 1本目の動画が最後まで再生されたら、タイムライン上の次の動画へ自動で続ける。
+    // 1本目の終わりと2本目の頭の間が空いていても(撮影のラグ等)、待たずに飛ばす。
+
+    private func addVideoEndObserver(to player: AVPlayer) {
+        removeVideoEndObserver()
+        guard let item = player.currentItem else { return }
+        videoEndObserver = NotificationCenter.default.addObserver(
+            forName: .AVPlayerItemDidPlayToEndTime,
+            object: item,
+            queue: .main
+        ) { _ in
+            Task { @MainActor in
+                handleVideoDidPlayToEnd()
+            }
+        }
+    }
+
+    private func removeVideoEndObserver() {
+        if let videoEndObserver {
+            NotificationCenter.default.removeObserver(videoEndObserver)
+        }
+        videoEndObserver = nil
+    }
+
+    private func handleVideoDidPlayToEnd() {
+        guard viewModel.isPlaying else { return }
+
+        // ファイルが付いている動画セグメントを時系列に並べ、今の次を探す
+        let playableSegments = viewModel.videoSegments
+            .filter { $0.fileName != nil }
+            .sorted { $0.startTime < $1.startTime }
+
+        guard let activeID = activeVideoSegmentID,
+              let activeIndex = playableSegments.firstIndex(where: { $0.id == activeID }),
+              activeIndex + 1 < playableSegments.count else {
+            // 次の動画がなければここで停止
+            videoPlayer?.pause()
+            viewModel.isPlaying = false
+            return
+        }
+
+        let next = playableSegments[activeIndex + 1]
+        jumpPlayback(to: next.startTime, keepPlaying: true)
     }
 }
 
