@@ -6,6 +6,7 @@
 //
 
 import Combine
+import PhotosUI
 import SwiftData
 import SwiftUI
 import UIKit
@@ -74,6 +75,11 @@ struct TimelineEditorView: View {
     @State private var isTimelineOverviewMode = true
     @State private var playhead = TimelinePlayheadState()
     @State private var didSetInitialPlayheadPosition = false
+    @State private var videoController = TimelineVideoController()
+    @State private var isVideoPhotoPickerPresented = false
+    @State private var videoPickerItem: PhotosPickerItem?
+    @State private var isVideoFileImporterPresented = false
+    @State private var isImportingVideo = false
 
     private let minimumTimelineZoom: CGFloat = 0.035
     private let maximumTimelineZoom: CGFloat = 10.0
@@ -337,13 +343,126 @@ struct TimelineEditorView: View {
     }
 
     private var videoPreview: some View {
-        RugbyVideoPreview()
-            .clipShape(RoundedRectangle(cornerRadius: 14))
-            .overlay(
-                RoundedRectangle(cornerRadius: 14)
-                    .stroke(Color.white.opacity(0.12), lineWidth: 1)
-            )
-            .shadow(color: .black.opacity(0.26), radius: 16, x: 0, y: 10)
+        ZStack {
+            Color.black
+
+            if let url = attachedVideoURL() {
+                VideoSurfaceView(player: videoController.player)
+                    .onAppear {
+                        videoController.load(url: url)
+                        videoController.seek(
+                            toVideoSeconds: videoSeconds(forTimelineSecond: playhead.second),
+                            precise: false
+                        )
+                    }
+            } else {
+                videoPlaceholder
+            }
+        }
+        .overlay(alignment: .topTrailing) {
+            videoMenuButton
+                .padding(10)
+        }
+        .overlay {
+            if isImportingVideo {
+                videoImportingOverlay
+            }
+        }
+        .clipShape(RoundedRectangle(cornerRadius: 14))
+        .overlay(
+            RoundedRectangle(cornerRadius: 14)
+                .stroke(Color.white.opacity(0.12), lineWidth: 1)
+        )
+        .shadow(color: .black.opacity(0.26), radius: 16, x: 0, y: 10)
+        .photosPicker(
+            isPresented: $isVideoPhotoPickerPresented,
+            selection: $videoPickerItem,
+            matching: .videos
+        )
+        .onChange(of: videoPickerItem) { _, item in
+            guard let item else { return }
+            importVideoFromPhotoLibrary(item)
+        }
+        .fileImporter(
+            isPresented: $isVideoFileImporterPresented,
+            allowedContentTypes: [.movie]
+        ) { result in
+            if case .success(let url) = result {
+                importVideoFromFile(url)
+            }
+        }
+    }
+
+    private var videoPlaceholder: some View {
+        VStack(spacing: 10) {
+            Image(systemName: "film.stack")
+                .font(.system(size: 40, weight: .bold))
+                .foregroundStyle(.white.opacity(0.36))
+            Text("動画を追加してください")
+                .font(.subheadline.weight(.bold))
+                .foregroundStyle(.white.opacity(0.6))
+        }
+    }
+
+    private var videoMenuButton: some View {
+        Menu {
+            if attachedVideoURL() != nil {
+                Button {
+                    isVideoPhotoPickerPresented = true
+                } label: {
+                    Label("写真ライブラリから選び直す", systemImage: "photo.on.rectangle")
+                }
+                Button {
+                    isVideoFileImporterPresented = true
+                } label: {
+                    Label("ファイルから選び直す", systemImage: "folder")
+                }
+                Button(role: .destructive) {
+                    removeVideo()
+                } label: {
+                    Label("動画を削除", systemImage: "trash")
+                }
+            } else {
+                Button {
+                    isVideoPhotoPickerPresented = true
+                } label: {
+                    Label("写真ライブラリから選ぶ", systemImage: "photo.on.rectangle")
+                }
+                Button {
+                    isVideoFileImporterPresented = true
+                } label: {
+                    Label("ファイルから選ぶ", systemImage: "folder")
+                }
+            }
+        } label: {
+            HStack(spacing: 5) {
+                Image(systemName: attachedVideoURL() == nil ? "plus" : "ellipsis")
+                    .font(.subheadline.weight(.black))
+                if attachedVideoURL() == nil {
+                    Text("動画追加")
+                        .font(.subheadline.weight(.black))
+                }
+            }
+            .foregroundStyle(.white)
+            .padding(.horizontal, 12)
+            .frame(height: 34)
+            .background(Color.white.opacity(0.14))
+            .clipShape(Capsule())
+            .overlay(Capsule().stroke(Color.white.opacity(0.2), lineWidth: 1))
+        }
+    }
+
+    private var videoImportingOverlay: some View {
+        ZStack {
+            Color.black.opacity(0.55)
+            VStack(spacing: 10) {
+                ProgressView()
+                    .tint(.white)
+                Text("動画を取り込み中…")
+                    .font(.caption.weight(.bold))
+                    .foregroundStyle(.white.opacity(0.8))
+            }
+        }
     }
 
     private func playbackControls(maxSeconds: Int) -> some View {
@@ -1852,6 +1971,115 @@ struct TimelineEditorView: View {
         }
     }
 
+    // ===== 動画の取り込み・削除 =====
+
+    private func importVideoFromPhotoLibrary(_ item: PhotosPickerItem) {
+        isImportingVideo = true
+        Task {
+            let picked = try? await item.loadTransferable(type: VideoStorage.PickedMatchVideo.self)
+            videoPickerItem = nil
+            isImportingVideo = false
+            if let picked {
+                attachVideo(fileName: picked.fileName)
+            } else {
+                saveErrorMessage = "動画を読み込めませんでした。もう一度試してください。"
+            }
+        }
+    }
+
+    private func importVideoFromFile(_ url: URL) {
+        isImportingVideo = true
+        Task {
+            // 動画のコピーは重いのでバックグラウンドで行う
+            let fileName = await Task.detached {
+                try? VideoStorage.importVideo(from: url)
+            }.value
+            isImportingVideo = false
+            if let fileName {
+                attachVideo(fileName: fileName)
+            } else {
+                saveErrorMessage = "動画を取り込めませんでした。もう一度試してください。"
+            }
+        }
+    }
+
+    private func attachVideo(fileName: String) {
+        stopTimelinePlayback()
+        if let oldName = match.videoPath, oldName != fileName {
+            VideoStorage.delete(named: oldName)
+        }
+        match.videoPath = fileName
+        match.videoFirstHalfKickoffSeconds = nil
+        match.videoSecondHalfKickoffSeconds = nil
+        saveTimelineChanges()
+        videoController.load(url: VideoStorage.url(named: fileName))
+    }
+
+    private func removeVideo() {
+        stopTimelinePlayback()
+        videoController.unload()
+        if let oldName = match.videoPath {
+            VideoStorage.delete(named: oldName)
+        }
+        match.videoPath = nil
+        match.videoFirstHalfKickoffSeconds = nil
+        match.videoSecondHalfKickoffSeconds = nil
+        saveTimelineChanges()
+    }
+
+    // ===== 動画の時間と試合時間の対応 =====
+
+    private func attachedVideoURL() -> URL? {
+        guard let name = match.videoPath, VideoStorage.exists(named: name) else { return nil }
+        return VideoStorage.url(named: name)
+    }
+
+    private func videoKickoffSeconds(forHalf half: Int) -> Double {
+        if half >= 1 {
+            if let set = match.videoSecondHalfKickoffSeconds {
+                return set
+            }
+            // 未設定なら「前半キックオフ + 前半の長さ」で近似（ハーフタイムなし想定）
+            return (match.videoFirstHalfKickoffSeconds ?? 0) + Double(timelinePresentation.halfDuration(for: 0))
+        }
+        return match.videoFirstHalfKickoffSeconds ?? 0
+    }
+
+    private func halfAndLocalSeconds(forTimelineSecond second: Double) -> (half: Int, local: Double) {
+        if let half = selectedScope.half {
+            return (half, second)
+        }
+        let secondHalfStart = Double(timelinePresentation.halfOffsets[1] ?? timelinePresentation.halfDuration(for: 0))
+        if second >= secondHalfStart {
+            return (1, second - secondHalfStart)
+        }
+        return (0, second)
+    }
+
+    private func videoSeconds(forTimelineSecond second: Double) -> Double {
+        let (half, local) = halfAndLocalSeconds(forTimelineSecond: second)
+        return videoKickoffSeconds(forHalf: half) + local
+    }
+
+    private func timelineSecond(forVideoSeconds videoSeconds: Double) -> Double {
+        switch selectedScope {
+        case .first:
+            return max(0, videoSeconds - videoKickoffSeconds(forHalf: 0))
+        case .second:
+            return max(0, videoSeconds - videoKickoffSeconds(forHalf: 1))
+        case .all:
+            let secondHalfStart = Double(timelinePresentation.halfOffsets[1] ?? timelinePresentation.halfDuration(for: 0))
+            let secondHalfKickoff = videoKickoffSeconds(forHalf: 1)
+            if videoSeconds >= secondHalfKickoff {
+                return secondHalfStart + (videoSeconds - secondHalfKickoff)
+            }
+            // ハーフタイム中の動画位置は前半終了地点として扱う
+            return min(max(0, videoSeconds - videoKickoffSeconds(forHalf: 0)), secondHalfStart)
+        }
+    }
+
+    // ===== 再生 =====
+
     private func toggleTimelinePlayback(maxSeconds: Int) {
         if isTimelinePlaying {
             stopTimelinePlayback()
@@ -1861,7 +2089,41 @@ struct TimelineEditorView: View {
     }
 
     private func startTimelinePlayback(maxSeconds: Int) {
-        timelinePlaybackTask?.cancel()
+        stopTimelinePlayback()
+        if let url = attachedVideoURL() {
+            startVideoPlayback(url: url, maxSeconds: maxSeconds)
+        } else {
+            startClockPlayback(maxSeconds: maxSeconds)
+        }
+    }
+
+    // 動画があるときの再生: 動画を進め、その時間にタイムラインを追従させる
+    private func startVideoPlayback(url: URL, maxSeconds: Int) {
+        isTimelinePlaying = true
+        videoController.load(url: url)
+        let startSecond = min(playhead.second, Double(maxSeconds))
+        videoController.onTick = { videoSeconds in
+            handleVideoPlaybackTick(videoSeconds: videoSeconds)
+        }
+        videoController.seek(toVideoSeconds: videoSeconds(forTimelineSecond: startSecond))
+        videoController.startObserving()
+        videoController.play()
+    }
+
+    private func handleVideoPlaybackTick(videoSeconds: Double) {
+        guard isTimelinePlaying else { return }
+        let maxSeconds = timelinePresentation.maxSeconds
+        let second = timelineSecond(forVideoSeconds: videoSeconds)
+        guard second < Double(maxSeconds) else {
+            scrollToTimelineSecond(Double(maxSeconds), maxSeconds: maxSeconds)
+            stopTimelinePlayback()
+            return
+        }
+        scrollToTimelineSecond(second, maxSeconds: maxSeconds)
+    }
+
+    // 動画がないときの再生: 実時間の時計でタイムラインだけを進める
+    private func startClockPlayback(maxSeconds: Int) {
         isTimelinePlaying = true
         let playbackStartSecond = min(playhead.second, Double(maxSeconds))
         let playbackStartDate = Date()
@@ -1884,6 +2146,8 @@ struct TimelineEditorView: View {
     private func stopTimelinePlayback() {
         timelinePlaybackTask?.cancel()
         timelinePlaybackTask = nil
+        videoController.pause()
+        videoController.stopObserving()
         isTimelinePlaying = false
     }
 
@@ -1955,6 +2219,17 @@ struct TimelineEditorView: View {
         let markerX = min(contentWidth, max(0, offset + viewportWidth / 2))
         let second = Double(timelineSecond(forContentX: markerX, maxSeconds: maxSeconds, contentWidth: contentWidth))
         playhead.second = min(max(0, second), Double(maxSeconds))
+
+        // 指でのスクラブは再生を止め、動画をその位置へ追従させる
+        if isTimelinePlaying {
+            stopTimelinePlayback()
+        }
+        if attachedVideoURL() != nil {
+            videoController.seek(
+                toVideoSeconds: videoSeconds(forTimelineSecond: playhead.second),
+                precise: false
+            )
+        }
     }
 
     private func positionInitialPlayheadIfNeeded(maxSeconds: Int, contentWidth: CGFloat) {
@@ -2789,139 +3064,6 @@ struct TimelineEditorView: View {
 
 }
 
-private struct RugbyVideoPreview: View {
-    private let players: [PreviewPlayerMarker] = [
-        PreviewPlayerMarker(id: 1, x: 0.16, y: 0.72, isHome: true),
-        PreviewPlayerMarker(id: 2, x: 0.21, y: 0.66, isHome: true),
-        PreviewPlayerMarker(id: 3, x: 0.25, y: 0.58, isHome: true),
-        PreviewPlayerMarker(id: 4, x: 0.31, y: 0.51, isHome: true),
-        PreviewPlayerMarker(id: 5, x: 0.36, y: 0.44, isHome: true),
-        PreviewPlayerMarker(id: 6, x: 0.40, y: 0.35, isHome: true),
-        PreviewPlayerMarker(id: 7, x: 0.26, y: 0.79, isHome: true),
-        PreviewPlayerMarker(id: 8, x: 0.42, y: 0.58, isHome: true),
-        PreviewPlayerMarker(id: 9, x: 0.64, y: 0.24, isHome: false),
-        PreviewPlayerMarker(id: 10, x: 0.70, y: 0.31, isHome: false),
-        PreviewPlayerMarker(id: 11, x: 0.76, y: 0.38, isHome: false),
-        PreviewPlayerMarker(id: 12, x: 0.82, y: 0.47, isHome: false),
-        PreviewPlayerMarker(id: 13, x: 0.88, y: 0.56, isHome: false),
-        PreviewPlayerMarker(id: 14, x: 0.73, y: 0.61, isHome: false),
-        PreviewPlayerMarker(id: 15, x: 0.56, y: 0.42, isHome: false),
-        PreviewPlayerMarker(id: 16, x: 0.52, y: 0.28, isHome: false),
-        PreviewPlayerMarker(id: 17, x: 0.48, y: 0.33, isHome: false)
-    ]
-
-    var body: some View {
-        GeometryReader { proxy in
-            let size = proxy.size
-
-            ZStack {
-                LinearGradient(
-                    colors: [
-                        Color(red: 0.20, green: 0.48, blue: 0.13),
-                        Color(red: 0.31, green: 0.62, blue: 0.20),
-                        Color(red: 0.17, green: 0.43, blue: 0.12)
-                    ],
-                    startPoint: .topLeading,
-                    endPoint: .bottomTrailing
-                )
-
-                VStack(spacing: 0) {
-                    stadiumBand
-                        .frame(height: size.height * 0.18)
-                    Spacer(minLength: 0)
-                }
-
-                pitchLines(size: size)
-                    .stroke(Color.white.opacity(0.34), lineWidth: 1)
-
-                ForEach(players) { marker in
-                    previewPlayer(isHome: marker.isHome)
-                        .position(x: marker.x * size.width, y: marker.y * size.height)
-                }
-
-                Rectangle()
-                    .fill(
-                        LinearGradient(
-                            colors: [.black.opacity(0.18), .clear, .black.opacity(0.16)],
-                            startPoint: .top,
-                            endPoint: .bottom
-                        )
-                    )
-            }
-        }
-    }
-
-    private var stadiumBand: some View {
-        ZStack(alignment: .bottom) {
-            LinearGradient(
-                colors: [
-                    Color(red: 0.07, green: 0.09, blue: 0.13),
-                    Color(red: 0.85, green: 0.17, blue: 0.08),
-                    Color(red: 0.05, green: 0.06, blue: 0.10)
-                ],
-                startPoint: .leading,
-                endPoint: .trailing
-            )
-
-            HStack(spacing: 7) {
-                ForEach(0..<12, id: \.self) { index in
-                    RoundedRectangle(cornerRadius: 1)
-                        .fill(index.isMultiple(of: 3) ? Color.white.opacity(0.88) : Color.black.opacity(0.48))
-                        .frame(width: index.isMultiple(of: 4) ? 34 : 24, height: 9)
-                }
-            }
-            .padding(.bottom, 4)
-        }
-    }
-
-    private func pitchLines(size: CGSize) -> Path {
-        var path = Path()
-        let width = size.width
-        let height = size.height
-        let top = height * 0.18
-        let bottom = height * 0.95
-
-        path.move(to: CGPoint(x: width * 0.12, y: top))
-        path.addLine(to: CGPoint(x: width * 0.03, y: bottom))
-        path.move(to: CGPoint(x: width * 0.94, y: top))
-        path.addLine(to: CGPoint(x: width * 0.98, y: bottom))
-        path.move(to: CGPoint(x: width * 0.50, y: top))
-        path.addLine(to: CGPoint(x: width * 0.50, y: bottom))
-        path.move(to: CGPoint(x: width * 0.28, y: top))
-        path.addLine(to: CGPoint(x: width * 0.20, y: bottom))
-        path.move(to: CGPoint(x: width * 0.73, y: top))
-        path.addLine(to: CGPoint(x: width * 0.80, y: bottom))
-        path.move(to: CGPoint(x: width * 0.04, y: height * 0.52))
-        path.addLine(to: CGPoint(x: width * 0.98, y: height * 0.48))
-
-        return path
-    }
-
-    private func previewPlayer(isHome: Bool) -> some View {
-        VStack(spacing: 1) {
-            Circle()
-                .fill(Color(red: 0.90, green: 0.70, blue: 0.54))
-                .frame(width: 4, height: 4)
-            RoundedRectangle(cornerRadius: 2)
-                .fill(isHome ? Color(red: 0.82, green: 0.05, blue: 0.07) : Color.white)
-                .frame(width: 10, height: 12)
-                .overlay(alignment: .bottom) {
-                    Rectangle()
-                        .fill(isHome ? Color.white.opacity(0.88) : Color(red: 0.05, green: 0.14, blue: 0.36))
-                        .frame(height: 3)
-                }
-        }
-        .frame(width: 15, height: 20)
-        .shadow(color: .black.opacity(0.32), radius: 2, x: 0, y: 1)
-    }
-}
-
-private struct PreviewPlayerMarker: Identifiable {
-    let id: Int
-    let x: CGFloat
-    let y: CGFloat
-    let isHome: Bool
-}
 
 // 再生ヘッド時刻の表示。この部品だけが毎フレームの時刻更新を受け取る。
 private struct TimelinePlayheadTimeLabel: View {
