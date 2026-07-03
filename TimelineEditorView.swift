@@ -80,6 +80,7 @@ struct TimelineEditorView: View {
     @State private var videoPickerItem: PhotosPickerItem?
     @State private var isVideoFileImporterPresented = false
     @State private var isImportingVideo = false
+    @State private var isVideoAlignmentPresented = false
 
     private let minimumTimelineZoom: CGFloat = 0.035
     private let maximumTimelineZoom: CGFloat = 10.0
@@ -391,6 +392,22 @@ struct TimelineEditorView: View {
                 importVideoFromFile(url)
             }
         }
+        .sheet(isPresented: $isVideoAlignmentPresented) {
+            VideoAlignmentSheet(
+                controller: videoController,
+                firstHalfKickoff: match.videoFirstHalfKickoffSeconds,
+                secondHalfKickoff: match.videoSecondHalfKickoffSeconds,
+                onSetFirstHalf: { value in
+                    match.videoFirstHalfKickoffSeconds = value
+                    saveTimelineChanges()
+                },
+                onSetSecondHalf: { value in
+                    match.videoSecondHalfKickoffSeconds = value
+                    saveTimelineChanges()
+                }
+            )
+            .presentationDetents([.medium])
+        }
     }
 
     private var videoPlaceholder: some View {
@@ -407,6 +424,12 @@ struct TimelineEditorView: View {
     private var videoMenuButton: some View {
         Menu {
             if attachedVideoURL() != nil {
+                Button {
+                    stopTimelinePlayback()
+                    isVideoAlignmentPresented = true
+                } label: {
+                    Label("時間合わせ", systemImage: "timer")
+                }
                 Button {
                     isVideoPhotoPickerPresented = true
                 } label: {

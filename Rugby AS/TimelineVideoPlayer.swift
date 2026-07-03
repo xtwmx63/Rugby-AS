@@ -86,6 +86,136 @@ final class TimelineVideoController {
     }
 }
 
+// 動画と試合時間の「時間合わせ」シート。
+// スライダーで動画をスクラブし（上のプレビューに映像が出る）、
+// 「今の位置に設定」で前半/後半キックオフの動画内位置を確定する。
+struct VideoAlignmentSheet: View {
+    let controller: TimelineVideoController
+    let firstHalfKickoff: Double?
+    let secondHalfKickoff: Double?
+    let onSetFirstHalf: (Double?) -> Void
+    let onSetSecondHalf: (Double?) -> Void
+
+    @Environment(\.dismiss) private var dismiss
+    @State private var scrubSeconds: Double = 0
+    @State private var durationSeconds: Double = 1
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            HStack {
+                Text("時間合わせ")
+                    .font(.headline.weight(.black))
+                Spacer()
+                Button("完了") {
+                    dismiss()
+                }
+                .font(.headline.weight(.bold))
+            }
+
+            Text("スライダーで動画を動かし、キックオフの瞬間で「今の位置に設定」を押してください。")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+            VStack(spacing: 8) {
+                Slider(value: $scrubSeconds, in: 0...max(durationSeconds, 1)) { isEditing in
+                    if !isEditing {
+                        controller.seek(toVideoSeconds: scrubSeconds)
+                    }
+                }
+                .onChange(of: scrubSeconds) { _, newValue in
+                    controller.seek(toVideoSeconds: newValue, precise: false)
+                }
+
+                HStack {
+                    Text("動画位置 \(Self.timeText(scrubSeconds))")
+                        .font(.subheadline.weight(.bold).monospacedDigit())
+                    Spacer()
+                    HStack(spacing: 6) {
+                        nudgeButton("-5", delta: -5)
+                        nudgeButton("-1", delta: -1)
+                        nudgeButton("+1", delta: 1)
+                        nudgeButton("+5", delta: 5)
+                    }
+                }
+            }
+
+            kickoffRow(
+                title: "前半キックオフ",
+                value: firstHalfKickoff,
+                onSet: onSetFirstHalf
+            )
+            kickoffRow(
+                title: "後半キックオフ",
+                value: secondHalfKickoff,
+                onSet: onSetSecondHalf
+            )
+
+            Spacer(minLength: 0)
+        }
+        .padding(18)
+        .onAppear {
+            controller.pause()
+            durationSeconds = controller.durationSeconds ?? 1
+            scrubSeconds = min(controller.currentVideoSeconds, durationSeconds)
+        }
+    }
+
+    private func kickoffRow(
+        title: String,
+        value: Double?,
+        onSet: @escaping (Double?) -> Void
+    ) -> some View {
+        HStack {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .font(.subheadline.weight(.bold))
+                Text(value.map { "動画の \(Self.timeText($0))" } ?? "未設定")
+                    .font(.caption.monospacedDigit())
+                    .foregroundStyle(value == nil ? .secondary : .primary)
+            }
+
+            Spacer()
+
+            if value != nil {
+                Button("解除") {
+                    onSet(nil)
+                }
+                .font(.caption.weight(.bold))
+                .buttonStyle(.bordered)
+            }
+
+            Button("今の位置に設定") {
+                onSet(scrubSeconds)
+            }
+            .font(.caption.weight(.bold))
+            .buttonStyle(.borderedProminent)
+        }
+        .padding(12)
+        .background(Color(.secondarySystemBackground))
+        .clipShape(RoundedRectangle(cornerRadius: 12))
+    }
+
+    private func nudgeButton(_ title: String, delta: Double) -> some View {
+        Button(title) {
+            scrubSeconds = min(max(0, scrubSeconds + delta), durationSeconds)
+            controller.seek(toVideoSeconds: scrubSeconds)
+        }
+        .font(.caption.weight(.bold).monospacedDigit())
+        .buttonStyle(.bordered)
+    }
+
+    private static func timeText(_ seconds: Double) -> String {
+        let total = Int(seconds.rounded())
+        let hours = total / 3600
+        let minutes = (total % 3600) / 60
+        let secs = total % 60
+        if hours > 0 {
+            return String(format: "%d:%02d:%02d", hours, minutes, secs)
+        }
+        return String(format: "%02d:%02d", minutes, secs)
+    }
+}
+
 // 動画の映像だけを表示する面（標準の再生ボタン等は出さない。
 // 操作はタイムライン側の再生ボタン・スクラブで行うため）。
 struct VideoSurfaceView: UIViewRepresentable {
