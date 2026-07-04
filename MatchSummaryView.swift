@@ -1227,10 +1227,12 @@ struct MatchSummaryView: View {
             scoringEventForPlayerSelection = event
         } label: {
             HStack(spacing: 8) {
+                // 失敗した行は✕バッジ以外を全体的に薄くして、成功行と一目で区別する
                 Text(timeText(event.seconds))
                     .font(.callout.monospacedDigit())
                     .foregroundStyle(.white.opacity(0.55))
                     .frame(width: 46, alignment: .leading)
+                    .opacity(isFailed ? 0.45 : 1.0)
 
                 Text(categoryTag(event.category))
                     .font(.callout.weight(.black))
@@ -1250,18 +1252,21 @@ struct MatchSummaryView: View {
                     }
 
                 playerAvatar(playerID: event.playerID, accent: teamAccent, size: 30)
+                    .opacity(isFailed ? 0.45 : 1.0)
 
                 Text(playerName(for: event.playerID))
                     .font(.headline)
                     .foregroundStyle(event.playerID == nil ? .orange : .white)
                     .lineLimit(1)
                     .minimumScaleFactor(0.6)
+                    .opacity(isFailed ? 0.45 : 1.0)
 
                 Spacer(minLength: 4)
 
                 Text("\(progression.home) - \(progression.away)")
                     .font(.headline.weight(.black).monospacedDigit())
                     .foregroundStyle(.white)
+                    .opacity(isFailed ? 0.45 : 1.0)
             }
             .padding(.vertical, 4)
             .contentShape(Rectangle())
