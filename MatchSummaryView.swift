@@ -197,6 +197,7 @@ struct MatchSummaryView: View {
                                 .frame(maxWidth: .infinity)
                         }
                         scoringProgressionCard
+                        scoreMarginCard
                         scorerTimelineCard
                     }
                     .padding(.horizontal, 8)
@@ -914,6 +915,207 @@ struct MatchSummaryView: View {
                             .stroke(Color.white.opacity(0.25), lineWidth: 1)
                     )
                     .position(x: bubbleX, y: bubbleHeight / 2)
+                }
+            }
+        }
+        .frame(height: chartHeight)
+    }
+
+    // MARK: - 得点差の推移グラフ
+
+    // 最終勝利チーム(同点ならHOME)から見た視点かどうか
+    private var marginPerspectiveIsHome: Bool {
+        score(for: match.homeTeamID) >= score(for: match.awayTeamID)
+    }
+
+    // イベントのチャート上の時刻(全体表示では後半に前半の長さを足す)
+    private func marginAxisSeconds(for event: StatEvent) -> Double {
+        let base = (selectedScope.half == nil && event.half >= 1) ? halfAxisSeconds(0) : 0
+        return base + Double(event.seconds)
+    }
+
+    // 得点差が変化した点のリスト(時刻順・累積済み)。
+    // 成功したCONは対になるTRYの時刻にまとめて、TRY+CON=7点を一度に動かす。
+    private func marginSteps() -> [(axisSeconds: Double, margin: Int)] {
+        let events = scoringEventsForSelectedScope.filter { event in
+            event.outcome == "success"
+                && (event.teamID == match.homeTeamID || event.teamID == match.awayTeamID)
+        }
+        let tries = events.filter { $0.category == "try" }
+        let perspectiveSign = marginPerspectiveIsHome ? 1 : -1
+
+        var deltas: [(time: Double, delta: Int)] = events.map { event in
+            let teamSign = event.teamID == match.homeTeamID ? 1 : -1
+            var time = marginAxisSeconds(for: event)
+            // 成功CONは同じチーム・同じハーフで直前のTRYの時刻に寄せる
+            if event.category == "conversion" {
+                let pairedTry = tries
+                    .filter { $0.teamID == event.teamID && $0.half == event.half && $0.seconds <= event.seconds }
+                    .max { $0.seconds < $1.seconds }
+                if let pairedTry {
+                    time = marginAxisSeconds(for: pairedTry)
+                }
+            }
+            return (time, perspectiveSign * teamSign * scoreValue(for: event))
+        }
+        deltas.sort { $0.time < $1.time }
+
+        // 同じ時刻の変化(TRY+CON)は1つの点にまとめて累積していく
+        var steps: [(axisSeconds: Double, margin: Int)] = []
+        var margin = marginAtScopeStart()
+        for delta in deltas {
+            margin += delta.delta
+            if let last = steps.last, abs(last.axisSeconds - delta.time) < 0.5 {
+                steps[steps.count - 1].margin = margin
+            } else {
+                steps.append((delta.time, margin))
+            }
+        }
+        return steps
+    }
+
+    // スコープ開始時点の得点差(後半表示のときは前半終了時の差から始める)
+    private func marginAtScopeStart() -> Int {
+        guard selectedScope.half == 1 else { return 0 }
+        let firstHalfMargin = score(for: match.homeTeamID, half: 0) - score(for: match.awayTeamID, half: 0)
+        return marginPerspectiveIsHome ? firstHalfMargin : -firstHalfMargin
+    }
+
+    private var scoreMarginCard: some View {
+        let axis = progressionAxis
+        let steps = marginSteps()
+        let perspectiveTeamID = marginPerspectiveIsHome ? match.homeTeamID : match.awayTeamID
+
+        return VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Label("得点差の推移（\(selectedScope.title)）", systemImage: "chart.line.uptrend.xyaxis")
+                    .font(.headline.weight(.black))
+                    .foregroundStyle(.white)
+                Spacer()
+                Text("\(teamName(for: perspectiveTeamID))視点")
+                    .font(.caption2.weight(.bold))
+                    .foregroundStyle(.white.opacity(0.55))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
+            }
+
+            if steps.isEmpty && marginAtScopeStart() == 0 {
+                Text("得点記録がありません")
+                    .font(.subheadline)
+                    .foregroundStyle(.white.opacity(0.55))
+                    .frame(maxWidth: .infinity, alignment: .center)
+                    .padding(.vertical, 12)
+            } else {
+                marginChart(steps: steps, axisTotal: axis.total, halftime: axis.halftime)
+            }
+        }
+        .padding(12)
+        .summaryCard()
+        .frame(maxWidth: .infinity)
+    }
+
+    private func marginChart(
+        steps: [(axisSeconds: Double, margin: Int)],
+        axisTotal: Double,
+        halftime: Double?
+    ) -> some View {
+        let plotHeight: CGFloat = 110
+        let tickHeight: CGFloat = 16
+        let halftimeLabelHeight: CGFloat = halftime == nil ? 0 : 14
+        let chartHeight = plotHeight + tickHeight + halftimeLabelHeight
+        let tickStep = progressionTickSeconds(total: axisTotal)
+        let startMargin = marginAtScopeStart()
+        let accent = marginPerspectiveIsHome ? homeAccent : awayAccent
+
+        // 縦軸の範囲。0を必ず含め、上下に少し余白を持たせる
+        let margins = [startMargin] + steps.map(\.margin)
+        let maxMargin = max(margins.max() ?? 0, 0) + 2
+        let minMargin = min(margins.min() ?? 0, 0) - 2
+
+        return GeometryReader { geo in
+            let labelWidth: CGFloat = 34
+            let plotLeft = labelWidth + 8
+            let plotRight = max(plotLeft + 1, geo.size.width - 14)
+            let yTicks = plotHeight + tickHeight / 2
+            let xPosition: (Double) -> CGFloat = { seconds in
+                plotLeft + CGFloat(seconds / max(axisTotal, 1)) * (plotRight - plotLeft)
+            }
+            let yPosition: (Int) -> CGFloat = { margin in
+                let range = CGFloat(max(maxMargin - minMargin, 1))
+                return (CGFloat(maxMargin - margin) / range) * (plotHeight - 12) + 6
+            }
+
+            ZStack(alignment: .topLeading) {
+                // 縦軸の目安(最大・0・最小)と薄い横線
+                ForEach([maxMargin, 0, minMargin], id: \.self) { value in
+                    Rectangle()
+                        .fill(Color.white.opacity(value == 0 ? 0.28 : 0.10))
+                        .frame(width: plotRight - plotLeft, height: 1)
+                        .position(x: (plotLeft + plotRight) / 2, y: yPosition(value))
+                    Text(value > 0 ? "+\(value)" : "\(value)")
+                        .font(.caption2.weight(.bold).monospacedDigit())
+                        .foregroundStyle(.white.opacity(value == 0 ? 0.6 : 0.4))
+                        .position(x: labelWidth / 2, y: yPosition(value))
+                }
+
+                // 分表示(得点経過と同じ振り方)
+                let ticks: [(x: Double, minutes: Int)] = {
+                    guard let halftime else {
+                        return stride(from: 0.0, through: axisTotal, by: tickStep)
+                            .map { ($0, Int($0) / 60) }
+                    }
+                    var result: [(Double, Int)] = stride(from: 0.0, through: halftime, by: tickStep)
+                        .map { ($0, Int($0) / 60) }
+                    let secondHalfTotal = axisTotal - halftime
+                    result += stride(from: tickStep, through: secondHalfTotal, by: tickStep)
+                        .map { (halftime + $0, Int($0) / 60) }
+                    return result
+                }()
+
+                ForEach(ticks, id: \.x) { tick in
+                    Text("\(tick.minutes)'")
+                        .font(.caption2.weight(.bold).monospacedDigit())
+                        .foregroundStyle(.white.opacity(0.45))
+                        .position(x: xPosition(tick.x), y: yTicks)
+                }
+
+                // ハーフタイムの区切り(全体表示のみ)
+                if let halftime {
+                    VerticalDashedLine()
+                        .stroke(style: StrokeStyle(lineWidth: 1, dash: [3, 3]))
+                        .foregroundStyle(Color.white.opacity(0.35))
+                        .frame(width: 1, height: plotHeight)
+                        .position(x: xPosition(halftime), y: plotHeight / 2)
+
+                    Text("HT")
+                        .font(.caption2.weight(.bold))
+                        .foregroundStyle(.white.opacity(0.5))
+                        .position(x: xPosition(halftime), y: plotHeight + tickHeight + 7)
+                }
+
+                // 得点差の階段状の折れ線
+                Path { path in
+                    var currentMargin = startMargin
+                    path.move(to: CGPoint(x: plotLeft, y: yPosition(currentMargin)))
+                    for step in steps {
+                        let x = xPosition(step.axisSeconds)
+                        path.addLine(to: CGPoint(x: x, y: yPosition(currentMargin)))
+                        path.addLine(to: CGPoint(x: x, y: yPosition(step.margin)))
+                        currentMargin = step.margin
+                    }
+                    path.addLine(to: CGPoint(x: plotRight, y: yPosition(currentMargin)))
+                }
+                .stroke(accent, style: StrokeStyle(lineWidth: 2.5, lineJoin: .round))
+
+                // 最終的な得点差を線の終わりに表示
+                if let finalMargin = steps.last?.margin ?? (startMargin != 0 ? startMargin : nil) {
+                    Text(finalMargin > 0 ? "+\(finalMargin)" : "\(finalMargin)")
+                        .font(.caption.weight(.black).monospacedDigit())
+                        .foregroundStyle(accent)
+                        .position(
+                            x: plotRight - 12,
+                            y: max(12, yPosition(finalMargin) - 12)
+                        )
                 }
             }
         }
