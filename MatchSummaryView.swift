@@ -701,7 +701,8 @@ struct MatchSummaryView: View {
     private var progressionMarkers: [ProgressionMarker] {
         let firstHalfSeconds = halfAxisSeconds(0)
         return scoringEventsForSelectedScope
-            .filter { scoreValue(for: $0) > 0 }
+            // 成功した得点だけをチャートに置く(失敗したCON/PG/DGは表示しない)
+            .filter { $0.outcome == "success" }
             .filter { $0.teamID == match.homeTeamID || $0.teamID == match.awayTeamID }
             .map { event in
                 let base = (selectedScope.half == nil && event.half >= 1) ? firstHalfSeconds : 0
@@ -810,12 +811,26 @@ struct MatchSummaryView: View {
                     .frame(width: plotRight - plotLeft, height: 1)
                     .position(x: (plotLeft + plotRight) / 2, y: yAway)
 
-                // 分表示(間引き済み)
-                ForEach(Array(stride(from: 0.0, through: axisTotal + 1, by: tickStep)), id: \.self) { tick in
-                    Text("\(Int(min(tick, axisTotal)) / 60)'")
+                // 分表示(間引き済み)。全体表示では後半も0分から振り直す
+                let ticks: [(x: Double, minutes: Int)] = {
+                    guard let halftime else {
+                        return stride(from: 0.0, through: axisTotal, by: tickStep)
+                            .map { ($0, Int($0) / 60) }
+                    }
+                    var result: [(Double, Int)] = stride(from: 0.0, through: halftime, by: tickStep)
+                        .map { ($0, Int($0) / 60) }
+                    // 後半分。0分はHTの線と重なるので省く
+                    let secondHalfTotal = axisTotal - halftime
+                    result += stride(from: tickStep, through: secondHalfTotal, by: tickStep)
+                        .map { (halftime + $0, Int($0) / 60) }
+                    return result
+                }()
+
+                ForEach(ticks, id: \.x) { tick in
+                    Text("\(tick.minutes)'")
                         .font(.caption2.weight(.bold).monospacedDigit())
                         .foregroundStyle(.white.opacity(0.45))
-                        .position(x: xPosition(min(tick, axisTotal)), y: yTicks)
+                        .position(x: xPosition(tick.x), y: yTicks)
                 }
 
                 // ハーフタイムの区切り(全体表示のみ)
@@ -959,6 +974,8 @@ struct MatchSummaryView: View {
         let teamAccent: Color = event.teamID == match.homeTeamID ? homeAccent
             : event.teamID == match.awayTeamID ? awayAccent
             : .secondary
+        // 失敗したキック(CON/PG/DG)はチップを薄くして✕印を付ける
+        let isFailed = event.outcome == "fail"
 
         return Button {
             scoringEventForPlayerSelection = event
@@ -973,9 +990,18 @@ struct MatchSummaryView: View {
                     .font(.callout.weight(.black))
                     .frame(width: 46)
                     .padding(.vertical, 6)
-                    .background(categoryColor(event.category).opacity(0.18))
-                    .foregroundStyle(categoryColor(event.category))
+                    .background(categoryColor(event.category).opacity(isFailed ? 0.08 : 0.18))
+                    .foregroundStyle(categoryColor(event.category).opacity(isFailed ? 0.45 : 1.0))
                     .clipShape(RoundedRectangle(cornerRadius: 7))
+                    .overlay(alignment: .topTrailing) {
+                        if isFailed {
+                            Image(systemName: "xmark.circle.fill")
+                                .font(.system(size: 13, weight: .bold))
+                                .foregroundStyle(.orange)
+                                .background(Circle().fill(Color(red: 0.03, green: 0.07, blue: 0.12)))
+                                .offset(x: 5, y: -5)
+                        }
+                    }
 
                 playerAvatar(playerID: event.playerID, accent: teamAccent, size: 30)
 
