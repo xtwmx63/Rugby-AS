@@ -152,28 +152,24 @@ final class YouTubePlayerController: NSObject {
     static let embedOrigin = "https://www.youtube.com"
 
     private static func playerHTML(videoID: String, startSeconds: Int) -> String {
-        """
+        // 枠(iframe)を自分で置き、src に本物の埋め込みアドレスを直接指定する。
+        // API に枠を作らせるとアプリ内では素性がずれて弾かれる(エラー150/152)ため、
+        // 既にある枠に YT.Player を後付けする方式にする。
+        let embedURL = "https://www.youtube.com/embed/\(videoID)"
+            + "?enablejsapi=1&playsinline=1&controls=0&rel=0&fs=0&iv_load_policy=3"
+            + "&start=\(startSeconds)&origin=\(embedOrigin)"
+        return """
         <!DOCTYPE html><html><head>
         <meta name="viewport" content="initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-        <style>html,body{margin:0;padding:0;background:#000;height:100%;overflow:hidden}#player{width:100%;height:100%}</style>
+        <style>html,body{margin:0;padding:0;background:#000;height:100%;overflow:hidden}#player{width:100%;height:100%;border:0}</style>
         </head><body>
-        <div id="player"></div>
+        <iframe id="player" src="\(embedURL)" width="100%" height="100%"
+          frameborder="0" allow="autoplay; encrypted-media; fullscreen"></iframe>
         <script src="https://www.youtube.com/iframe_api"></script>
         <script>
         var player;
         function onYouTubeIframeAPIReady() {
           player = new YT.Player('player', {
-            videoId: '\(videoID)',
-            playerVars: {
-              playsinline: 1,
-              start: \(startSeconds),
-              controls: 0,
-              rel: 0,
-              fs: 0,
-              iv_load_policy: 3,
-              enablejsapi: 1,
-              origin: '\(embedOrigin)'
-            },
             events: {
               onReady: function() { window.webkit.messageHandlers.yt.postMessage('ready'); },
               onStateChange: function(e) { window.webkit.messageHandlers.yt.postMessage('state:' + e.data); },
