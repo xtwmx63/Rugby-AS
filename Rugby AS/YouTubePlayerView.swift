@@ -27,6 +27,8 @@ final class YouTubePlayerController: NSObject {
     var onTick: ((Double) -> Void)?
     // 動画そのものが最後まで再生されたときに呼ばれる。
     var onEnded: (() -> Void)?
+    // プレーヤーがエラーを出したときに呼ばれる。引数はYouTubeのエラーコード。
+    var onError: ((Int) -> Void)?
 
     override init() {
         let configuration = WKWebViewConfiguration()
@@ -50,7 +52,7 @@ final class YouTubePlayerController: NSObject {
         pendingCommands = []
         webView.loadHTMLString(
             Self.playerHTML(videoID: videoID, startSeconds: Int(max(0, startSeconds))),
-            baseURL: URL(string: "https://www.youtube.com")
+            baseURL: URL(string: Self.embedOrigin)
         )
     }
 
@@ -122,8 +124,32 @@ final class YouTubePlayerController: NSObject {
             // 0 = 再生終了
             stopPolling()
             onEnded?()
+        } else if body.hasPrefix("error:") {
+            stopPolling()
+            let code = Int(body.dropFirst("error:".count)) ?? -1
+            onError?(code)
         }
     }
+
+    /// YouTubeのエラーコードを人に分かる説明にする
+    static func errorDescription(forCode code: Int) -> String {
+        switch code {
+        case 2:
+            return "動画IDが正しくありません。URLを確認してください。"
+        case 5:
+            return "この動画はアプリ内プレーヤーで再生できませんでした。"
+        case 100:
+            return "動画が見つかりません(削除済みか非公開の可能性)。"
+        case 101, 150, 152, 153:
+            return "この動画は投稿者が埋め込み再生を許可していないため、アプリ内では再生できません。"
+        default:
+            return "YouTube動画を再生できませんでした(コード\(code))。通信環境を確認してください。"
+        }
+    }
+
+    // 埋め込み元として名乗るアドレス。YouTubeの新しいプレーヤーは
+    // 素性(origin)が不明な埋め込みを弾くことがある(エラー152等)ため必須。
+    static let embedOrigin = "https://www.youtube.com"
 
     private static func playerHTML(videoID: String, startSeconds: Int) -> String {
         """
@@ -138,10 +164,20 @@ final class YouTubePlayerController: NSObject {
         function onYouTubeIframeAPIReady() {
           player = new YT.Player('player', {
             videoId: '\(videoID)',
-            playerVars: { playsinline: 1, start: \(startSeconds), controls: 0, rel: 0, fs: 0, iv_load_policy: 3 },
+            playerVars: {
+              playsinline: 1,
+              start: \(startSeconds),
+              controls: 0,
+              rel: 0,
+              fs: 0,
+              iv_load_policy: 3,
+              enablejsapi: 1,
+              origin: '\(embedOrigin)'
+            },
             events: {
               onReady: function() { window.webkit.messageHandlers.yt.postMessage('ready'); },
-              onStateChange: function(e) { window.webkit.messageHandlers.yt.postMessage('state:' + e.data); }
+              onStateChange: function(e) { window.webkit.messageHandlers.yt.postMessage('state:' + e.data); },
+              onError: function(e) { window.webkit.messageHandlers.yt.postMessage('error:' + e.data); }
             }
           });
         }

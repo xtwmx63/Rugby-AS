@@ -1683,6 +1683,10 @@ struct TimelineEditorView: View {
         youTubeController.onEnded = {
             handleVideoDidPlayToEnd()
         }
+        youTubeController.onError = { code in
+            viewModel.isPlaying = false
+            editorErrorMessage = YouTubePlayerController.errorDescription(forCode: code)
+        }
         youTubeController.load(videoID: videoID, startSeconds: youTubeStart + localTime)
         youTubeController.seek(to: youTubeStart + localTime)
 
