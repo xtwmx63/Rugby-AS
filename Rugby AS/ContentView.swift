@@ -253,7 +253,12 @@ struct ContentView: View {
                 bottomTabItem("チーム", systemImage: "person.3", isSelected: false)
             }
             .buttonStyle(.plain)
-            bottomTabItem("設定", systemImage: "gearshape", isSelected: false)
+            NavigationLink {
+                SettingsView()
+            } label: {
+                bottomTabItem("設定", systemImage: "gearshape", isSelected: false)
+            }
+            .buttonStyle(.plain)
         }
         .padding(.horizontal, 18)
         .padding(.top, 10)

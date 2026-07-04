@@ -15,6 +15,8 @@ struct CreateMatchView: View {
     @Query(sort: \Team.name) private var teams: [Team]
 
     @AppStorage("lastMatchDateTimestamp") private var lastMatchDateTimestamp = Date().timeIntervalSince1970
+    // 設定画面で入力した自チーム名。ホームチームの初期値に使う
+    @AppStorage("defaultTeamName") private var defaultTeamName = ""
 
     @State private var selectedTournamentID: UUID?
     @State private var newTournamentName = ""
@@ -85,6 +87,7 @@ struct CreateMatchView: View {
         }
         .onAppear {
             playedAt = Date(timeIntervalSince1970: lastMatchDateTimestamp)
+            applyDefaultTeamNameIfNeeded()
         }
         .alert(alertTitle, isPresented: alertBinding) {
             Button("OK", role: .cancel) {}
@@ -95,6 +98,21 @@ struct CreateMatchView: View {
             // 記録の前にスタメン/リザーブを登録する画面を挟む。
             // この画面の「保存」で V3RecordingView へ遷移する。
             LineupRegistrationView(match: match)
+        }
+    }
+
+    // 設定の自チーム名をホームチームに最初から入れておく(毎回入力させない)。
+    // 既に同名のチームが登録済みならそれを選択、なければ新規名として入れる。
+    private func applyDefaultTeamNameIfNeeded() {
+        let name = trimmed(defaultTeamName)
+        guard !name.isEmpty,
+              selectedHomeTeamID == nil,
+              trimmed(newHomeTeamName).isEmpty else { return }
+
+        if let existing = teams.first(where: { $0.name == name }) {
+            selectedHomeTeamID = existing.id
+        } else {
+            newHomeTeamName = name
         }
     }
 
