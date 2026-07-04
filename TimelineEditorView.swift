@@ -142,13 +142,6 @@ struct VideoSegment: Identifiable, Equatable {
     var startTime: Double
     var endTime: Double
     var fileName: String? = nil
-    // YouTube動画のとき: 動画IDと、この区間がYouTube動画内の何秒から始まるか
-    var youTubeVideoID: String? = nil
-    var youTubeStartSeconds: Double? = nil
-
-    // 実際に再生できるか(ファイルがあるか、YouTube動画か)
-    var isPlayable: Bool { fileName != nil || youTubeVideoID != nil }
-    var isYouTube: Bool { youTubeVideoID != nil }
 }
 
 struct TimelineState {
@@ -196,7 +189,6 @@ private struct VideoSegmentContentIdentity: Hashable {
     let startTicks: Int
     let endTicks: Int
     let fileName: String?
-    let youTubeVideoID: String?
 }
 
 @MainActor
@@ -378,13 +370,7 @@ final class TimelineEditorViewModel: ObservableObject {
     }
 
     @discardableResult
-    func addVideoSegment(
-        sourceName: String,
-        duration: Double,
-        fileName: String? = nil,
-        youTubeVideoID: String? = nil,
-        youTubeStartSeconds: Double? = nil
-    ) -> VideoSegment {
+    func addVideoSegment(sourceName: String, duration: Double, fileName: String? = nil) -> VideoSegment {
         saveForUndo()
         let start = videoSegments.map(\.endTime).max().map { $0 + 12 } ?? 0
         let end = start + max(1, duration)
@@ -393,9 +379,7 @@ final class TimelineEditorViewModel: ObservableObject {
             sourceName: sourceName,
             startTime: start,
             endTime: end,
-            fileName: fileName,
-            youTubeVideoID: youTubeVideoID,
-            youTubeStartSeconds: youTubeStartSeconds
+            fileName: fileName
         )
         videoSegments.append(segment)
         selectVideoSegment(segment.id)
@@ -555,9 +539,6 @@ struct TimelineEditorView: View {
     @State private var activeVideoSegmentID: UUID?
     @State private var playbackTimeObserver: Any?
     @State private var videoEndObserver: NSObjectProtocol?
-    // YouTube埋め込み再生の操作役(ファイル動画のAVPlayerに相当)
-    @State private var youTubeController = YouTubePlayerController()
-    @State private var isYouTubeAddSheetPresented = false
     @State private var timelineScrollOffset: CGFloat = 0
     @State private var isScrubbingTimeline = false
     @State private var isMatchClockSettingsPresented = false
@@ -613,22 +594,11 @@ struct TimelineEditorView: View {
                     VideoPreviewCard(
                         videoSegments: viewModel.videoSegments,
                         player: videoPlayer,
-                        selectedVideoSegmentID: viewModel.selectedVideoSegmentID,
-                        showsYouTube: activeSegmentIsYouTube,
-                        youTubeController: youTubeController
+                        selectedVideoSegmentID: viewModel.selectedVideoSegmentID
                     )
                         .frame(height: videoHeight)
                         .overlay(alignment: .topTrailing) {
-                            Menu {
-                                PhotosPicker(selection: $selectedVideoItems, maxSelectionCount: 8, matching: .videos) {
-                                    Label("写真ライブラリから", systemImage: "photo.on.rectangle")
-                                }
-                                Button {
-                                    isYouTubeAddSheetPresented = true
-                                } label: {
-                                    Label("YouTubeから追加", systemImage: "play.rectangle.fill")
-                                }
-                            } label: {
+                            PhotosPicker(selection: $selectedVideoItems, maxSelectionCount: 8, matching: .videos) {
                                 Label("動画追加", systemImage: "plus")
                                     .font(.system(size: 13, weight: .bold))
                                     .foregroundStyle(.white)
@@ -779,12 +749,6 @@ struct TimelineEditorView: View {
                 .presentationDetents([.large])
             }
         }
-        .sheet(isPresented: $isYouTubeAddSheetPresented) {
-            YouTubeVideoAddSheet { videoID, startSeconds, endSeconds in
-                addYouTubeVideo(videoID: videoID, startSeconds: startSeconds, endSeconds: endSeconds)
-            }
-            .presentationDetents([.medium, .large])
-        }
         .alert("操作できませんでした", isPresented: Binding(
             get: { editorErrorMessage != nil },
             set: { if !$0 { editorErrorMessage = nil } }
@@ -796,7 +760,6 @@ struct TimelineEditorView: View {
         .onDisappear {
             removePlaybackObserver()
             videoPlayer?.pause()
-            youTubeController.pause()
         }
     }
 
@@ -1036,10 +999,6 @@ struct TimelineEditorView: View {
                     VideoStorage.removeVideoName(fileName, for: match.id)
                 }
             }
-            if removedVideo.isYouTube {
-                youTubeController.unload()
-                persistYouTubeVideos()
-            }
             configurePlayerForSelectedVideo(autoplay: false)
             return
         }
@@ -1112,39 +1071,9 @@ struct TimelineEditorView: View {
 
             let videoNames = viewModel.videoSegments.compactMap(\.fileName)
             VideoStorage.setVideoNames(videoNames, for: match.id)
-            persistYouTubeVideos()
         } catch {
             editorErrorMessage = "編集履歴を保存状態へ反映できませんでした。"
         }
-    }
-
-    // YouTube区間の情報(動画ID・開始/終了)を端末設定へ保存する
-    private func persistYouTubeVideos() {
-        guard let match else { return }
-        let videos = viewModel.videoSegments.compactMap { segment -> StoredYouTubeVideo? in
-            guard let videoID = segment.youTubeVideoID else { return nil }
-            let start = segment.youTubeStartSeconds ?? 0
-            return StoredYouTubeVideo(
-                videoID: videoID,
-                startSeconds: start,
-                endSeconds: start + (segment.endTime - segment.startTime)
-            )
-        }
-        YouTubeVideoStorage.setVideos(videos, for: match.id)
-    }
-
-    // 入力されたYouTube区間をタイムラインに追加する
-    private func addYouTubeVideo(videoID: String, startSeconds: Double, endSeconds: Double) {
-        let duration = max(1, endSeconds - startSeconds)
-        let youTubeCount = viewModel.videoSegments.filter(\.isYouTube).count
-        let segment = viewModel.addVideoSegment(
-            sourceName: "YT\(youTubeCount + 1)",
-            duration: duration,
-            youTubeVideoID: videoID,
-            youTubeStartSeconds: startSeconds
-        )
-        persistYouTubeVideos()
-        selectVideoSegment(segment, autoplay: false)
     }
 
     private func fetchStatEvent(id: UUID) -> StatEvent? {
@@ -1344,8 +1273,7 @@ struct TimelineEditorView: View {
 
         let storedNames = VideoStorage.videoNames(for: match.id)
         let availableNames = storedNames.filter { VideoStorage.url(named: $0) != nil }
-        let storedYouTubeVideos = YouTubeVideoStorage.videos(for: match.id)
-        guard !availableNames.isEmpty || !storedYouTubeVideos.isEmpty else { return }
+        guard !availableNames.isEmpty else { return }
 
         var segments: [VideoSegment] = []
         var cursor: Double = 0
@@ -1363,23 +1291,6 @@ struct TimelineEditorView: View {
                 )
             )
             cursor = end + 12
-        }
-
-        // 保存してあるYouTube区間はファイル動画の後ろに並べる
-        for (index, video) in storedYouTubeVideos.enumerated() {
-            let duration = max(1, video.endSeconds - video.startSeconds)
-            segments.append(
-                VideoSegment(
-                    id: UUID(),
-                    sourceName: "YT\(index + 1)",
-                    startTime: cursor,
-                    endTime: cursor + duration,
-                    fileName: nil,
-                    youTubeVideoID: video.videoID,
-                    youTubeStartSeconds: video.startSeconds
-                )
-            )
-            cursor += duration + 12
         }
 
         viewModel.setVideoSegments(segments)
@@ -1401,7 +1312,6 @@ struct TimelineEditorView: View {
     private func toggleVideoPlayback() {
         if viewModel.isPlaying {
             videoPlayer?.pause()
-            youTubeController.pause()
             viewModel.isPlaying = false
             return
         }
@@ -1410,14 +1320,8 @@ struct TimelineEditorView: View {
            segmentAtTime.id != viewModel.selectedVideoSegmentID {
             viewModel.selectVideoSegment(segmentAtTime.id)
             configurePlayer(for: segmentAtTime, autoplay: false)
-        } else if videoPlayer == nil && !activeSegmentIsYouTube {
+        } else if videoPlayer == nil {
             configurePlayerForSelectedVideo(autoplay: false)
-        }
-
-        if activeSegmentIsYouTube {
-            youTubeController.play()
-            viewModel.isPlaying = true
-            return
         }
 
         guard let videoPlayer else {
@@ -1444,7 +1348,6 @@ struct TimelineEditorView: View {
 
         viewModel.currentVideoTime = clampedTime
         videoPlayer?.pause()
-        youTubeController.pause()
         viewModel.isPlaying = false
         seekPlayerToCurrentTime(selectingSegmentAtCurrentTime: true)
     }
@@ -1457,7 +1360,6 @@ struct TimelineEditorView: View {
         if selectedPlaybackTrack == trackType {
             clearSequentialPlayback()
             videoPlayer?.pause()
-            youTubeController.pause()
             viewModel.isPlaying = false
             return
         }
@@ -1509,16 +1411,9 @@ struct TimelineEditorView: View {
 
         guard let segment = playableVideoSegment(at: clampedTime) else { return }
 
-        if activeVideoSegmentID != segment.id || (!segment.isYouTube && videoPlayer == nil) {
+        if activeVideoSegmentID != segment.id || videoPlayer == nil {
             viewModel.selectVideoSegment(segment.id)
             configurePlayer(for: segment, autoplay: keepPlaying)
-        } else if segment.isYouTube {
-            let localTime = min(max(0, clampedTime - segment.startTime), max(0, segment.endTime - segment.startTime))
-            youTubeController.seek(to: (segment.youTubeStartSeconds ?? 0) + localTime)
-            if keepPlaying {
-                youTubeController.play()
-                viewModel.isPlaying = true
-            }
         } else {
             let localTime = min(max(0, clampedTime - segment.startTime), max(0, segment.endTime - segment.startTime))
             videoPlayer?.seek(
@@ -1554,7 +1449,6 @@ struct TimelineEditorView: View {
         guard nextIndex < playbackQueue.count else {
             // 最後の区間まで見終わったら停止して選択も解除
             videoPlayer?.pause()
-            youTubeController.pause()
             viewModel.isPlaying = false
             clearSequentialPlayback()
             return
@@ -1575,17 +1469,13 @@ struct TimelineEditorView: View {
 
         guard let segment else { return }
 
-        if activeVideoSegmentID != segment.id || (!segment.isYouTube && videoPlayer == nil) {
+        if activeVideoSegmentID != segment.id || videoPlayer == nil {
             viewModel.selectVideoSegment(segment.id)
             configurePlayer(for: segment, autoplay: false)
             return
         }
 
         let localTime = min(max(0, viewModel.currentVideoTime - segment.startTime), max(0, segment.endTime - segment.startTime))
-        if segment.isYouTube {
-            youTubeController.seek(to: (segment.youTubeStartSeconds ?? 0) + localTime)
-            return
-        }
         videoPlayer?.seek(
             to: CMTime(seconds: localTime, preferredTimescale: 600),
             toleranceBefore: .zero,
@@ -1595,21 +1485,15 @@ struct TimelineEditorView: View {
 
     private func playableVideoSegment(at time: Double) -> VideoSegment? {
         viewModel.videoSegments.first { segment in
-            segment.isPlayable && segment.startTime <= time && time <= segment.endTime
+            segment.fileName != nil && segment.startTime <= time && time <= segment.endTime
         }
-    }
-
-    // 今選ばれているセグメントがYouTube動画かどうか
-    private var activeSegmentIsYouTube: Bool {
-        viewModel.videoSegment(id: activeVideoSegmentID)?.isYouTube == true
     }
 
     private func configurePlayerForSelectedVideo(autoplay: Bool) {
         guard let segment = viewModel.videoSegment(id: viewModel.selectedVideoSegmentID)
-                ?? viewModel.videoSegments.first(where: { $0.isPlayable }) else {
+                ?? viewModel.videoSegments.first(where: { $0.fileName != nil }) else {
             removePlaybackObserver()
             videoPlayer?.pause()
-            youTubeController.pause()
             videoPlayer = nil
             activeVideoSegmentID = nil
             viewModel.isPlaying = false
@@ -1620,13 +1504,6 @@ struct TimelineEditorView: View {
     }
 
     private func configurePlayer(for segment: VideoSegment, autoplay: Bool) {
-        // YouTube区間は埋め込みプレーヤー側で扱う
-        if segment.isYouTube {
-            configureYouTubePlayer(for: segment, autoplay: autoplay)
-            return
-        }
-        youTubeController.pause()
-
         guard let fileName = segment.fileName,
               let url = VideoStorage.url(named: fileName) else {
             removePlaybackObserver()
@@ -1660,62 +1537,6 @@ struct TimelineEditorView: View {
             player.pause()
             viewModel.isPlaying = false
         }
-    }
-
-    // YouTube区間の再生準備。ファイル動画のAVPlayerは止めて埋め込み側に切り替える
-    private func configureYouTubePlayer(for segment: VideoSegment, autoplay: Bool) {
-        guard let videoID = segment.youTubeVideoID else { return }
-
-        removePlaybackObserver()
-        videoPlayer?.pause()
-        videoPlayer = nil
-        activeVideoSegmentID = segment.id
-
-        let youTubeStart = segment.youTubeStartSeconds ?? 0
-        let localTime = min(
-            max(0, viewModel.currentVideoTime - segment.startTime),
-            max(0, segment.endTime - segment.startTime)
-        )
-
-        youTubeController.onTick = { seconds in
-            handleYouTubeTick(videoSeconds: seconds)
-        }
-        youTubeController.onEnded = {
-            handleVideoDidPlayToEnd()
-        }
-        youTubeController.onError = { code in
-            viewModel.isPlaying = false
-            editorErrorMessage = YouTubePlayerController.errorDescription(forCode: code)
-        }
-        youTubeController.load(videoID: videoID, startSeconds: youTubeStart + localTime)
-        youTubeController.seek(to: youTubeStart + localTime)
-
-        if autoplay {
-            youTubeController.play()
-            viewModel.isPlaying = true
-        } else {
-            youTubeController.pause()
-            viewModel.isPlaying = false
-        }
-    }
-
-    // YouTube再生位置(0.25秒ごと)をタイムラインへ反映する
-    private func handleYouTubeTick(videoSeconds: Double) {
-        guard let segment = viewModel.videoSegment(id: activeVideoSegmentID),
-              segment.isYouTube else {
-            return
-        }
-        let youTubeStart = segment.youTubeStartSeconds ?? 0
-        let localTime = videoSeconds - youTubeStart
-        viewModel.currentVideoTime = min(viewModel.videoDuration, segment.startTime + localTime)
-
-        // 入力した「終了タイム」まで来たら、ファイル動画の再生終了と同じ扱いで次へ
-        if viewModel.isPlaying, segment.startTime + localTime >= segment.endTime - 0.1 {
-            youTubeController.pause()
-            handleVideoDidPlayToEnd()
-            return
-        }
-        checkSequentialPlaybackProgress()
     }
 
     private func addPlaybackObserver(to player: AVPlayer, segment: VideoSegment) {
@@ -1768,9 +1589,9 @@ struct TimelineEditorView: View {
     private func handleVideoDidPlayToEnd() {
         guard viewModel.isPlaying else { return }
 
-        // 再生できる動画セグメント(ファイル or YouTube)を時系列に並べ、今の次を探す
+        // ファイルが付いている動画セグメントを時系列に並べ、今の次を探す
         let playableSegments = viewModel.videoSegments
-            .filter { $0.isPlayable }
+            .filter { $0.fileName != nil }
             .sorted { $0.startTime < $1.startTime }
 
         guard let activeID = activeVideoSegmentID,
@@ -1778,7 +1599,6 @@ struct TimelineEditorView: View {
               activeIndex + 1 < playableSegments.count else {
             // 次の動画がなければここで停止
             videoPlayer?.pause()
-            youTubeController.pause()
             viewModel.isPlaying = false
             return
         }
@@ -1830,18 +1650,13 @@ struct VideoPreviewCard: View {
     var videoSegments: [VideoSegment]
     var player: AVPlayer?
     var selectedVideoSegmentID: UUID?
-    // YouTube区間を表示するとき true(その間はAVPlayerでなく埋め込みを表示)
-    var showsYouTube: Bool = false
-    var youTubeController: YouTubePlayerController?
 
     var body: some View {
         GeometryReader { proxy in
             ZStack {
                 Color.black
 
-                if showsYouTube, let youTubeController {
-                    YouTubePlayerSurfaceView(controller: youTubeController)
-                } else if let player {
+                if let player {
                     TimelineVideoPlayerView(player: player)
                 } else {
                     VStack(spacing: 10) {
@@ -2026,8 +1841,7 @@ struct TimelineTracksView: View {
                         sourceName: segment.sourceName,
                         startTicks: Self.timeTicks(segment.startTime),
                         endTicks: Self.timeTicks(segment.endTime),
-                        fileName: segment.fileName,
-                        youTubeVideoID: segment.youTubeVideoID
+                        fileName: segment.fileName
                     )
                 },
                 selectedClipID: viewModel.selectedClipID,
