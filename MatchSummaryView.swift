@@ -180,26 +180,30 @@ struct MatchSummaryView: View {
         ZStack {
             summaryBackground.ignoresSafeArea()
 
-            ScrollView {
-                VStack(spacing: 8) {
-                    topBar
-                    scoreHeaderCard
-                    scopePicker
-                    possessionCard
-                    HStack(alignment: .top, spacing: 10) {
-                        scoringBreakdownCard
-                            .frame(maxWidth: .infinity)
-                            .layoutPriority(1)
-                        setPieceCard
-                            .frame(maxWidth: .infinity)
+            VStack(spacing: 0) {
+                ScrollView {
+                    VStack(spacing: 8) {
+                        topBar
+                        scoreHeaderCard
+                        scopePicker
+                        possessionCard
+                        HStack(alignment: .top, spacing: 10) {
+                            scoringBreakdownCard
+                                .frame(maxWidth: .infinity)
+                                .layoutPriority(1)
+                            setPieceCard
+                                .frame(maxWidth: .infinity)
+                        }
+                        scorerTimelineCard
                     }
-                    scorerTimelineCard
+                    .padding(.horizontal, 8)
+                    .padding(.top, 2)
+                    .padding(.bottom, 16)
                 }
-                .padding(.horizontal, 8)
-                .padding(.top, 2)
-                .padding(.bottom, 16)
+                .simultaneousGesture(scopeSwipeGesture)
+
+                csvExportBar
             }
-            .simultaneousGesture(scopeSwipeGesture)
         }
         .navigationBarBackButtonHidden(true)
         .toolbar(.hidden, for: .navigationBar)
@@ -234,72 +238,82 @@ struct MatchSummaryView: View {
     }
 
     private var topBar: some View {
-        // タイトルを左詰めにして、右のボタン群と重ならないようにする。
-        // 中央固定だとボタンが増えたとき文字と被るため。
-        HStack(spacing: 10) {
-            Button {
-                dismiss()
-            } label: {
-                Image(systemName: "chevron.left")
-                    .font(.title3.weight(.bold))
-                    .foregroundStyle(.white)
-                    .frame(width: 44, height: 44)
-                    .background(Color.white.opacity(0.12))
-                    .clipShape(Circle())
-                    .overlay(Circle().stroke(Color.white.opacity(0.16), lineWidth: 1))
-            }
-            .buttonStyle(.plain)
-
+        ZStack {
             Text("サマリー")
                 .font(.title3.weight(.black))
                 .foregroundStyle(.white)
                 .lineLimit(1)
-                .layoutPriority(1)
 
-            Spacer(minLength: 8)
+            HStack(spacing: 10) {
+                Button {
+                    dismiss()
+                } label: {
+                    Image(systemName: "chevron.left")
+                        .font(.title3.weight(.bold))
+                        .foregroundStyle(.white)
+                        .frame(width: 44, height: 44)
+                        .background(Color.white.opacity(0.12))
+                        .clipShape(Circle())
+                        .overlay(Circle().stroke(Color.white.opacity(0.16), lineWidth: 1))
+                }
+                .buttonStyle(.plain)
 
-            ShareLink(item: csvFile, preview: SharePreview(csvFile.fileName)) {
-                Image(systemName: "square.and.arrow.up")
-                    .font(.headline.weight(.bold))
-                    .foregroundStyle(.white)
-                    .frame(width: 44, height: 44)
-                    .background(Color.white.opacity(0.10))
-                    .clipShape(Circle())
-                    .overlay(Circle().stroke(Color.white.opacity(0.18), lineWidth: 1))
+                Spacer()
+
+                HStack(spacing: 8) {
+                    Button {
+                        isTimelineEditorPresented = true
+                    } label: {
+                        Text("編集")
+                            .font(.subheadline.weight(.bold))
+                            .foregroundStyle(.white)
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.8)
+                            .frame(width: 54, height: 44)
+                            .background(Color.blue)
+                            .clipShape(Capsule())
+                    }
+                    .buttonStyle(.plain)
+
+                    Button {
+                        isRecordingPresented = true
+                    } label: {
+                        Text("記録へ")
+                            .font(.subheadline.weight(.bold))
+                            .foregroundStyle(.white)
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.8)
+                            .frame(width: 64, height: 44)
+                            .background(Color.white.opacity(0.10))
+                            .clipShape(Capsule())
+                            .overlay(Capsule().stroke(Color.white.opacity(0.18), lineWidth: 1))
+                    }
+                    .buttonStyle(.plain)
+                }
             }
-            .buttonStyle(.plain)
-            .accessibilityLabel("CSVで書き出し")
-
-            Button {
-                isTimelineEditorPresented = true
-            } label: {
-                Text("編集")
-                    .font(.subheadline.weight(.bold))
-                    .foregroundStyle(.white)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.8)
-                    .frame(width: 54, height: 44)
-                    .background(Color.blue)
-                    .clipShape(Capsule())
-            }
-            .buttonStyle(.plain)
-
-            Button {
-                isRecordingPresented = true
-            } label: {
-                Text("記録へ")
-                    .font(.subheadline.weight(.bold))
-                    .foregroundStyle(.white)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.8)
-                    .frame(width: 64, height: 44)
-                    .background(Color.white.opacity(0.10))
-                    .clipShape(Capsule())
-                    .overlay(Capsule().stroke(Color.white.opacity(0.18), lineWidth: 1))
-            }
-            .buttonStyle(.plain)
         }
         .frame(height: 50)
+    }
+
+    // 画面最下部に固定するCSV出力ボタン(得点タイムラインの枠の外)
+    private var csvExportBar: some View {
+        ShareLink(item: csvFile, preview: SharePreview(csvFile.fileName)) {
+            Label("CSV出力", systemImage: "square.and.arrow.down")
+                .font(.headline.weight(.bold))
+                .foregroundStyle(.white)
+                .frame(maxWidth: .infinity)
+                .frame(height: 54)
+                .background(Color.white.opacity(0.05))
+                .clipShape(RoundedRectangle(cornerRadius: 16))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 16)
+                        .stroke(Color.white.opacity(0.38), lineWidth: 1.5)
+                )
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("CSVで書き出し")
+        .padding(.horizontal, 16)
+        .padding(.top, 8)
     }
 
     private var scoreHeaderCard: some View {
