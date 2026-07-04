@@ -24,6 +24,8 @@ struct MatchSummaryView: View {
     @State private var selectedScope: SummaryScope = .all
     // 得点経過チャートで選択中の得点(タップで吹き出し表示)
     @State private var selectedProgressionEventID: UUID?
+    // 得点差グラフの視点。nil なら自動(最終勝者、同点はHOME)
+    @State private var marginPerspectiveOverride: Bool?
 
     private enum SummaryScope: String, CaseIterable, Identifiable {
         case all
@@ -923,9 +925,10 @@ struct MatchSummaryView: View {
 
     // MARK: - 得点差の推移グラフ
 
-    // 最終勝利チーム(同点ならHOME)から見た視点かどうか
+    // グラフの視点。手動で切り替えた場合はそれを優先し、
+    // 未指定なら最終勝利チーム(同点ならHOME)。
     private var marginPerspectiveIsHome: Bool {
-        score(for: match.homeTeamID) >= score(for: match.awayTeamID)
+        marginPerspectiveOverride ?? (score(for: match.homeTeamID) >= score(for: match.awayTeamID))
     }
 
     // イベントのチャート上の時刻(全体表示では後半に前半の長さを足す)
@@ -981,22 +984,46 @@ struct MatchSummaryView: View {
         return marginPerspectiveIsHome ? firstHalfMargin : -firstHalfMargin
     }
 
+    // 視点切り替え(HOME/AWAY)のチップ
+    private func marginPerspectiveChip(_ title: String, isHome: Bool) -> some View {
+        let isSelected = marginPerspectiveIsHome == isHome
+        let accent = isHome ? homeAccent : awayAccent
+
+        return Button {
+            marginPerspectiveOverride = isHome
+        } label: {
+            Text(title)
+                .font(.caption2.weight(.black))
+                .foregroundStyle(isSelected ? .white : .white.opacity(0.45))
+                .padding(.horizontal, 9)
+                .padding(.vertical, 5)
+                .background(Capsule().fill(isSelected ? accent.opacity(0.42) : Color.white.opacity(0.07)))
+                .overlay(
+                    Capsule().stroke(
+                        isSelected ? accent : Color.white.opacity(0.14),
+                        lineWidth: 1
+                    )
+                )
+        }
+        .buttonStyle(.plain)
+    }
+
     private var scoreMarginCard: some View {
         let axis = progressionAxis
         let steps = marginSteps()
-        let perspectiveTeamID = marginPerspectiveIsHome ? match.homeTeamID : match.awayTeamID
 
         return VStack(alignment: .leading, spacing: 8) {
             HStack {
                 Label("得点差の推移（\(selectedScope.title)）", systemImage: "chart.line.uptrend.xyaxis")
                     .font(.headline.weight(.black))
                     .foregroundStyle(.white)
-                Spacer()
-                Text("\(teamName(for: perspectiveTeamID))視点")
-                    .font(.caption2.weight(.bold))
-                    .foregroundStyle(.white.opacity(0.55))
                     .lineLimit(1)
                     .minimumScaleFactor(0.7)
+                Spacer()
+                HStack(spacing: 4) {
+                    marginPerspectiveChip("HOME", isHome: true)
+                    marginPerspectiveChip("AWAY", isHome: false)
+                }
             }
 
             if steps.isEmpty && marginAtScopeStart() == 0 {
@@ -1027,10 +1054,12 @@ struct MatchSummaryView: View {
         let startMargin = marginAtScopeStart()
         let accent = marginPerspectiveIsHome ? homeAccent : awayAccent
 
-        // 縦軸の範囲。0を必ず含め、上下に少し余白を持たせる
+        // 縦軸の範囲。0を必ず含め、7点(トライ+ゴール)単位で切り上げる
         let margins = [startMargin] + steps.map(\.margin)
-        let maxMargin = max(margins.max() ?? 0, 0) + 2
-        let minMargin = min(margins.min() ?? 0, 0) - 2
+        let maxMargin = max(7, Int(ceil(Double(margins.max() ?? 0) / 7.0)) * 7)
+        let minMargin = min(0, Int(floor(Double(margins.min() ?? 0) / 7.0)) * 7)
+        // 7点ごとの目盛り線の値
+        let gridValues = Array(stride(from: minMargin, through: maxMargin, by: 7))
 
         return GeometryReader { geo in
             let labelWidth: CGFloat = 34
@@ -1046,8 +1075,8 @@ struct MatchSummaryView: View {
             }
 
             ZStack(alignment: .topLeading) {
-                // 縦軸の目安(最大・0・最小)と薄い横線
-                ForEach([maxMargin, 0, minMargin], id: \.self) { value in
+                // 7点ごとの目盛り線(0の線だけ濃くする)
+                ForEach(gridValues, id: \.self) { value in
                     Rectangle()
                         .fill(Color.white.opacity(value == 0 ? 0.28 : 0.10))
                         .frame(width: plotRight - plotLeft, height: 1)
@@ -1106,6 +1135,15 @@ struct MatchSummaryView: View {
                     path.addLine(to: CGPoint(x: plotRight, y: yPosition(currentMargin)))
                 }
                 .stroke(accent, style: StrokeStyle(lineWidth: 2.5, lineJoin: .round))
+
+                // 得点が動いたポイントに小さいマーカーを置く
+                ForEach(Array(steps.enumerated()), id: \.offset) { _, step in
+                    Circle()
+                        .fill(accent)
+                        .frame(width: 7, height: 7)
+                        .overlay(Circle().stroke(Color.black.opacity(0.45), lineWidth: 1))
+                        .position(x: xPosition(step.axisSeconds), y: yPosition(step.margin))
+                }
 
                 // 最終的な得点差を線の終わりに表示
                 if let finalMargin = steps.last?.margin ?? (startMargin != 0 ? startMargin : nil) {
