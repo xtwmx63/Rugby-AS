@@ -14,6 +14,7 @@ struct MatchSummaryView: View {
     @Query(sort: \Player.number) private var allPlayers: [Player]
     @Query private var matchEvents: [StatEvent]
     @Query private var teams: [Team]
+    @Query private var tournaments: [Tournament]
 
     let match: Match
 
@@ -96,6 +97,17 @@ struct MatchSummaryView: View {
 
     private var isFinished: Bool {
         matchEvents.contains { $0.category == "match_state" && $0.outcome == "finished" }
+    }
+
+    // この試合の全記録をCSVにしたもの(共有ボタンから書き出す)
+    private var csvFile: MatchCSVFile {
+        MatchCSVExporter.makeFile(
+            match: match,
+            events: matchEvents,
+            teams: teams,
+            players: players,
+            tournamentName: tournaments.first { $0.id == match.tournamentID }?.officialName ?? "大会未設定"
+        )
     }
 
     // MARK: - Team accent colors
@@ -245,6 +257,18 @@ struct MatchSummaryView: View {
                 Spacer()
 
                 HStack(spacing: 8) {
+                    ShareLink(item: csvFile, preview: SharePreview(csvFile.fileName)) {
+                        Image(systemName: "square.and.arrow.up")
+                            .font(.headline.weight(.bold))
+                            .foregroundStyle(.white)
+                            .frame(width: 44, height: 44)
+                            .background(Color.white.opacity(0.10))
+                            .clipShape(Circle())
+                            .overlay(Circle().stroke(Color.white.opacity(0.18), lineWidth: 1))
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("CSVで書き出し")
+
                     Button {
                         isTimelineEditorPresented = true
                     } label: {
