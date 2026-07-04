@@ -22,6 +22,8 @@ struct MatchSummaryView: View {
     @State private var isRecordingPresented = false
     @State private var isTimelineEditorPresented = false
     @State private var selectedScope: SummaryScope = .all
+    // 得点経過チャートで選択中の得点(タップで吹き出し表示)
+    @State private var selectedProgressionEventID: UUID?
 
     private enum SummaryScope: String, CaseIterable, Identifiable {
         case all
@@ -194,6 +196,7 @@ struct MatchSummaryView: View {
                             setPieceCard
                                 .frame(maxWidth: .infinity)
                         }
+                        scoringProgressionCard
                         scorerTimelineCard
                     }
                     .padding(.horizontal, 8)
@@ -207,6 +210,9 @@ struct MatchSummaryView: View {
         }
         .navigationBarBackButtonHidden(true)
         .toolbar(.hidden, for: .navigationBar)
+        .onChange(of: selectedScope) { _, _ in
+            selectedProgressionEventID = nil
+        }
         .fullScreenCover(isPresented: $isRecordingPresented) {
             V3RecordingView(match: match)
         }
@@ -657,6 +663,242 @@ struct MatchSummaryView: View {
 
     // MARK: - Scorer timeline
 
+    // MARK: - 得点経過チャート
+
+    // チャートに置く1つの得点マーカー
+    private struct ProgressionMarker: Identifiable {
+        let id: UUID
+        let axisSeconds: Double
+        let isHome: Bool
+        let letter: String
+        let event: StatEvent
+    }
+
+    // その前後半の軸の長さ(秒)。実際の記録の最終時刻を分単位に切り上げる。
+    // 形式(7人制/15人制)を決め打ちしないため、データから長さを決める。
+    private func halfAxisSeconds(_ half: Int) -> Double {
+        let maxEventSecond = matchEvents
+            .filter { $0.half == half && $0.category != "match_state" }
+            .map { event -> Int in
+                if event.category == "possession" {
+                    return (event.startSeconds ?? 0) + event.seconds
+                }
+                return event.seconds
+            }
+            .max() ?? 0
+        return Double(max(60, Int(ceil(Double(maxEventSecond) / 60.0)) * 60))
+    }
+
+    // 表示スコープに応じた軸全体の長さと、HT(ハーフタイム)の位置
+    private var progressionAxis: (total: Double, halftime: Double?) {
+        if let half = selectedScope.half {
+            return (halfAxisSeconds(half), nil)
+        }
+        let firstHalf = halfAxisSeconds(0)
+        return (firstHalf + halfAxisSeconds(1), firstHalf)
+    }
+
+    private var progressionMarkers: [ProgressionMarker] {
+        let firstHalfSeconds = halfAxisSeconds(0)
+        return scoringEventsForSelectedScope
+            .filter { scoreValue(for: $0) > 0 }
+            .filter { $0.teamID == match.homeTeamID || $0.teamID == match.awayTeamID }
+            .map { event in
+                let base = (selectedScope.half == nil && event.half >= 1) ? firstHalfSeconds : 0
+                return ProgressionMarker(
+                    id: event.id,
+                    axisSeconds: base + Double(event.seconds),
+                    isHome: event.teamID == match.homeTeamID,
+                    letter: progressionLetter(event.category),
+                    event: event
+                )
+            }
+    }
+
+    private func progressionLetter(_ category: String) -> String {
+        switch category {
+        case "try": return "T"
+        case "conversion": return "C"
+        case "penalty_goal": return "P"
+        case "drop_goal": return "D"
+        default: return "?"
+        }
+    }
+
+    // 分表示の間隔。数字だらけにならないよう、試合の長さに合わせて
+    // 1/2/5/10/20分刻みから「9個以内に収まる」ものを選ぶ。
+    private func progressionTickSeconds(total: Double) -> Double {
+        let totalMinutes = total / 60.0
+        for minutes in [1.0, 2.0, 5.0, 10.0, 20.0] where totalMinutes / minutes <= 9 {
+            return minutes * 60
+        }
+        return 30 * 60
+    }
+
+    private func progressionTimeLabel(for event: StatEvent) -> String {
+        if selectedScope.half == nil {
+            return "\(halfLabel(event.half)) \(timeText(event.seconds))"
+        }
+        return timeText(event.seconds)
+    }
+
+    private var scoringProgressionCard: some View {
+        let axis = progressionAxis
+        let markers = progressionMarkers
+
+        return VStack(alignment: .leading, spacing: 8) {
+            Label("得点経過（\(selectedScope.title)）", systemImage: "chart.xyaxis.line")
+                .font(.headline.weight(.black))
+                .foregroundStyle(.white)
+
+            if markers.isEmpty {
+                Text("得点記録がありません")
+                    .font(.subheadline)
+                    .foregroundStyle(.white.opacity(0.55))
+                    .frame(maxWidth: .infinity, alignment: .center)
+                    .padding(.vertical, 12)
+            } else {
+                progressionChart(markers: markers, axisTotal: axis.total, halftime: axis.halftime)
+            }
+        }
+        .padding(12)
+        .summaryCard()
+        .frame(maxWidth: .infinity)
+    }
+
+    private func progressionChart(
+        markers: [ProgressionMarker],
+        axisTotal: Double,
+        halftime: Double?
+    ) -> some View {
+        // 上から: 吹き出しエリア / HOME行 / 分表示 / AWAY行 / HT表示
+        let bubbleHeight: CGFloat = 50
+        let rowHeight: CGFloat = 30
+        let tickHeight: CGFloat = 16
+        let halftimeLabelHeight: CGFloat = halftime == nil ? 0 : 14
+        let chartHeight = bubbleHeight + rowHeight * 2 + tickHeight + halftimeLabelHeight
+        let tickStep = progressionTickSeconds(total: axisTotal)
+
+        return GeometryReader { geo in
+            let labelWidth: CGFloat = 44
+            let plotLeft = labelWidth + 12
+            let plotRight = max(plotLeft + 1, geo.size.width - 14)
+            let yHome = bubbleHeight + rowHeight / 2
+            let yTicks = bubbleHeight + rowHeight + tickHeight / 2
+            let yAway = bubbleHeight + rowHeight + tickHeight + rowHeight / 2
+            let xPosition: (Double) -> CGFloat = { seconds in
+                plotLeft + CGFloat(seconds / max(axisTotal, 1)) * (plotRight - plotLeft)
+            }
+
+            ZStack(alignment: .topLeading) {
+                // 行ラベルと下敷きの線
+                Text("HOME")
+                    .font(.caption2.weight(.black))
+                    .foregroundStyle(homeAccent)
+                    .position(x: labelWidth / 2, y: yHome)
+                Text("AWAY")
+                    .font(.caption2.weight(.black))
+                    .foregroundStyle(awayAccent)
+                    .position(x: labelWidth / 2, y: yAway)
+
+                Rectangle()
+                    .fill(Color.white.opacity(0.10))
+                    .frame(width: plotRight - plotLeft, height: 1)
+                    .position(x: (plotLeft + plotRight) / 2, y: yHome)
+                Rectangle()
+                    .fill(Color.white.opacity(0.10))
+                    .frame(width: plotRight - plotLeft, height: 1)
+                    .position(x: (plotLeft + plotRight) / 2, y: yAway)
+
+                // 分表示(間引き済み)
+                ForEach(Array(stride(from: 0.0, through: axisTotal + 1, by: tickStep)), id: \.self) { tick in
+                    Text("\(Int(min(tick, axisTotal)) / 60)'")
+                        .font(.caption2.weight(.bold).monospacedDigit())
+                        .foregroundStyle(.white.opacity(0.45))
+                        .position(x: xPosition(min(tick, axisTotal)), y: yTicks)
+                }
+
+                // ハーフタイムの区切り(全体表示のみ)
+                if let halftime {
+                    VerticalDashedLine()
+                        .stroke(style: StrokeStyle(lineWidth: 1, dash: [3, 3]))
+                        .foregroundStyle(Color.white.opacity(0.35))
+                        .frame(width: 1, height: yAway - yHome + rowHeight)
+                        .position(x: xPosition(halftime), y: (yHome + yAway) / 2)
+
+                    Text("HT")
+                        .font(.caption2.weight(.bold))
+                        .foregroundStyle(.white.opacity(0.5))
+                        .position(x: xPosition(halftime), y: yAway + rowHeight / 2 + 7)
+                }
+
+                // 得点マーカー(タップで吹き出し)
+                ForEach(markers) { marker in
+                    let accent = marker.isHome ? homeAccent : awayAccent
+                    let isSelected = selectedProgressionEventID == marker.id
+
+                    Button {
+                        withAnimation(.easeOut(duration: 0.15)) {
+                            selectedProgressionEventID = isSelected ? nil : marker.id
+                        }
+                    } label: {
+                        Text(marker.letter)
+                            .font(.system(size: 11, weight: .black, design: .rounded))
+                            .foregroundStyle(Color.black.opacity(0.82))
+                            .frame(width: 22, height: 22)
+                            .background(Circle().fill(accent))
+                            .overlay(
+                                Circle().stroke(
+                                    isSelected ? Color.white : Color.black.opacity(0.35),
+                                    lineWidth: isSelected ? 2 : 1
+                                )
+                            )
+                            .scaleEffect(isSelected ? 1.15 : 1.0)
+                    }
+                    .buttonStyle(.plain)
+                    .position(x: xPosition(marker.axisSeconds), y: marker.isHome ? yHome : yAway)
+                    .zIndex(isSelected ? 2 : 1)
+                }
+
+                // 選択中の得点の詳細(種類・秒までの時間・選手)
+                if let selected = markers.first(where: { $0.id == selectedProgressionEventID }) {
+                    let accent = selected.isHome ? homeAccent : awayAccent
+                    let bubbleX = min(max(xPosition(selected.axisSeconds), 92), geo.size.width - 92)
+
+                    HStack(spacing: 8) {
+                        playerAvatar(playerID: selected.event.playerID, accent: accent, size: 26)
+                        VStack(alignment: .leading, spacing: 1) {
+                            HStack(spacing: 6) {
+                                Text(categoryTag(selected.event.category))
+                                    .font(.caption.weight(.black))
+                                    .foregroundStyle(accent)
+                                Text(progressionTimeLabel(for: selected.event))
+                                    .font(.caption.weight(.bold).monospacedDigit())
+                                    .foregroundStyle(.white)
+                            }
+                            Text(playerName(for: selected.event.playerID))
+                                .font(.caption)
+                                .foregroundStyle(selected.event.playerID == nil ? .orange : .white.opacity(0.85))
+                                .lineLimit(1)
+                        }
+                    }
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 6)
+                    .background(
+                        RoundedRectangle(cornerRadius: 10)
+                            .fill(Color(red: 0.05, green: 0.10, blue: 0.16))
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 10)
+                            .stroke(Color.white.opacity(0.25), lineWidth: 1)
+                    )
+                    .position(x: bubbleX, y: bubbleHeight / 2)
+                }
+            }
+        }
+        .frame(height: chartHeight)
+    }
+
     private var scorerTimelineCard: some View {
         let visibleEvents = scoringEventsForSelectedScope
 
@@ -945,6 +1187,16 @@ private extension View {
                     .stroke(Color.white.opacity(0.14), lineWidth: 1)
             )
             .clipShape(RoundedRectangle(cornerRadius: cornerRadius))
+    }
+}
+
+// 得点経過チャートのHT(ハーフタイム)区切りに使う縦の点線
+private struct VerticalDashedLine: Shape {
+    func path(in rect: CGRect) -> Path {
+        var path = Path()
+        path.move(to: CGPoint(x: rect.midX, y: rect.minY))
+        path.addLine(to: CGPoint(x: rect.midX, y: rect.maxY))
+        return path
     }
 }
 
