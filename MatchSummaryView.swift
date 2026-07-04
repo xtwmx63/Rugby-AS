@@ -851,6 +851,12 @@ struct MatchSummaryView: View {
                 ForEach(markers) { marker in
                     let accent = marker.isHome ? homeAccent : awayAccent
                     let isSelected = selectedProgressionEventID == marker.id
+                    // CONはTryとほぼ同時刻で重なるので、行の外側
+                    // (HOMEは上・AWAYは下)へ少しずらし、小さめにしてペアで見せる
+                    let isConversion = marker.event.category == "conversion"
+                    let rowY = marker.isHome ? yHome : yAway
+                    let markerY = isConversion ? (marker.isHome ? rowY - 12 : rowY + 12) : rowY
+                    let markerSize: CGFloat = isConversion ? 19 : 22
 
                     Button {
                         withAnimation(.easeOut(duration: 0.15)) {
@@ -858,9 +864,9 @@ struct MatchSummaryView: View {
                         }
                     } label: {
                         Text(marker.letter)
-                            .font(.system(size: 11, weight: .black, design: .rounded))
+                            .font(.system(size: isConversion ? 10 : 11, weight: .black, design: .rounded))
                             .foregroundStyle(Color.black.opacity(0.82))
-                            .frame(width: 22, height: 22)
+                            .frame(width: markerSize, height: markerSize)
                             .background(Circle().fill(accent))
                             .overlay(
                                 Circle().stroke(
@@ -871,7 +877,7 @@ struct MatchSummaryView: View {
                             .scaleEffect(isSelected ? 1.15 : 1.0)
                     }
                     .buttonStyle(.plain)
-                    .position(x: xPosition(marker.axisSeconds), y: marker.isHome ? yHome : yAway)
+                    .position(x: xPosition(marker.axisSeconds), y: markerY)
                     .zIndex(isSelected ? 2 : 1)
                 }
 
