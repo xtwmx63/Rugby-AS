@@ -182,7 +182,7 @@ struct MatchSummaryView: View {
 
             VStack(spacing: 0) {
                 ScrollView {
-                    VStack(spacing: 8) {
+                    VStack(spacing: 6) {
                         topBar
                         scoreHeaderCard
                         scopePicker
@@ -317,13 +317,13 @@ struct MatchSummaryView: View {
     }
 
     private var scoreHeaderCard: some View {
-        VStack(spacing: 9) {
+        VStack(spacing: 6) {
             if isFinished {
                 Text("試合終了")
                     .font(.caption.weight(.black))
                     .foregroundStyle(.green)
                     .padding(.horizontal, 14)
-                    .padding(.vertical, 5)
+                    .padding(.vertical, 4)
                     .background(Color.green.opacity(0.22))
                     .clipShape(Capsule())
             }
@@ -332,7 +332,7 @@ struct MatchSummaryView: View {
                 teamColumn(teamID: match.homeTeamID, label: "HOME", accent: homeAccent)
 
                 Text("\(score(for: match.homeTeamID)) - \(score(for: match.awayTeamID))")
-                    .font(.system(size: 40, weight: .black, design: .rounded))
+                    .font(.system(size: 34, weight: .black, design: .rounded))
                     .monospacedDigit()
                     .foregroundStyle(.white)
                     .lineLimit(1)
@@ -353,7 +353,7 @@ struct MatchSummaryView: View {
             .foregroundStyle(.white.opacity(0.56))
         }
         .padding(.horizontal, 12)
-        .padding(.vertical, 14)
+        .padding(.vertical, 9)
         .summaryCard()
     }
 
@@ -389,8 +389,8 @@ struct MatchSummaryView: View {
     }
 
     private func teamColumn(teamID: UUID, label: String, accent: Color) -> some View {
-        VStack(spacing: 6) {
-            teamLogoBox(teamID: teamID, size: 58)
+        VStack(spacing: 5) {
+            teamLogoBox(teamID: teamID, size: 48)
             Text(teamName(for: teamID))
                 .font(.caption.weight(.black))
                 .foregroundStyle(.white)
@@ -457,7 +457,7 @@ struct MatchSummaryView: View {
         let homeRatio = teamsTotal == 0 ? 0 : Double(homeSeconds) / Double(teamsTotal)
         let awayRatio = teamsTotal == 0 ? 0 : Double(awaySeconds) / Double(teamsTotal)
 
-        return VStack(alignment: .leading, spacing: 12) {
+        return VStack(alignment: .leading, spacing: 9) {
             HStack {
                 Text("ポゼッション")
                     .font(.headline.weight(.black))
@@ -482,12 +482,12 @@ struct MatchSummaryView: View {
                 }
                 .clipShape(Capsule())
             }
-            .frame(height: 14)
+            .frame(height: 12)
 
             HStack(alignment: .bottom) {
                 VStack(alignment: .leading, spacing: 6) {
                     Text(percentText(homeRatio))
-                        .font(.system(size: 30, weight: .black, design: .rounded).monospacedDigit())
+                        .font(.system(size: 26, weight: .black, design: .rounded).monospacedDigit())
                         .foregroundStyle(homeAccent)
                     HStack(spacing: 8) {
                         Text(timeText(homeSeconds))
@@ -499,7 +499,7 @@ struct MatchSummaryView: View {
                 Spacer()
                 VStack(alignment: .trailing, spacing: 6) {
                     Text(percentText(awayRatio))
-                        .font(.system(size: 30, weight: .black, design: .rounded).monospacedDigit())
+                        .font(.system(size: 26, weight: .black, design: .rounded).monospacedDigit())
                         .foregroundStyle(awayAccent)
                     HStack(spacing: 8) {
                         teamPill("AWAY", accent: awayAccent)
@@ -510,7 +510,7 @@ struct MatchSummaryView: View {
                 }
             }
         }
-        .padding(14)
+        .padding(10)
         .summaryCard()
         .frame(maxWidth: .infinity)
     }
