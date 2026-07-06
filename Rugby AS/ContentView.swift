@@ -390,13 +390,35 @@ struct ContentView: View {
     }
 
     private func deleteMatch(_ match: Match) {
-        // SwiftData の @Relationship は未定義のため、StatEvent は自動カスケード削除されない。
-        // 孤児を残さないよう、紐づく StatEvent を明示的に全削除してから Match を削除する。
-        let relatedEvents = events.filter { $0.matchID == match.id }
-        for event in relatedEvents {
+        // SwiftData の @Relationship は未定義のため関連データは自動削除されない。
+        // 孤児を残さないよう、この試合に紐づくものを明示的に全部片付ける。
+        let matchID = match.id
+
+        // 記録(スタッツ)
+        for event in events where event.matchID == matchID {
             modelContext.delete(event)
         }
-        VideoStorage.deleteVideo(for: match.id)
+        // メンバー表
+        if let lineups = try? modelContext.fetch(
+            FetchDescriptor<MatchLineup>(predicate: #Predicate { $0.matchID == matchID })
+        ) {
+            for lineup in lineups {
+                modelContext.delete(lineup)
+            }
+        }
+        // 交代(V1では作られないが、あれば片付ける)
+        if let substitutions = try? modelContext.fetch(
+            FetchDescriptor<Substitution>(predicate: #Predicate { $0.matchID == matchID })
+        ) {
+            for substitution in substitutions {
+                modelContext.delete(substitution)
+            }
+        }
+
+        // 端末に置いた動画ファイルと試合時間設定
+        VideoStorage.deleteVideo(for: matchID)
+        MatchClockSettingsCleanup.removeSettings(for: matchID)
+
         modelContext.delete(match)
         try? modelContext.save()
     }

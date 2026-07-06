@@ -2797,6 +2797,26 @@ private struct TimelineMatchClockStop: Codable, Identifiable, Equatable {
     var durationSeconds: Int
 }
 
+// 試合削除時に、その試合の時計設定だけを消すための公開ヘルパー。
+// 値の型(非公開)に触れずに、保存領域から該当試合のキーだけ取り除く。
+enum MatchClockSettingsCleanup {
+    // TimelineMatchClockStorage と同じ保存キー
+    private static let storageKey = "matchClockSettingsByMatchID"
+
+    static func removeSettings(for matchID: UUID) {
+        guard let data = UserDefaults.standard.data(forKey: storageKey),
+              var map = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else {
+            return
+        }
+        map.removeValue(forKey: matchID.uuidString)
+        if map.isEmpty {
+            UserDefaults.standard.removeObject(forKey: storageKey)
+        } else if let newData = try? JSONSerialization.data(withJSONObject: map) {
+            UserDefaults.standard.set(newData, forKey: storageKey)
+        }
+    }
+}
+
 private enum TimelineMatchClockStorage {
     private static let storageKey = "matchClockSettingsByMatchID"
 
