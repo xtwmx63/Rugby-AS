@@ -229,7 +229,11 @@ enum BackupManager {
             if let existing = existingTeams[item.id] {
                 existing.name = item.name
                 existing.colorHex = item.colorHex
-                if let logoPath { existing.logoPath = logoPath }
+                if let logoPath {
+                    // 新しい写真に差し替えるときは、古いファイルを消して二重を防ぐ
+                    if let oldPath = existing.logoPath { ImageStorage.delete(named: oldPath) }
+                    existing.logoPath = logoPath
+                }
             } else {
                 context.insert(Team(id: item.id, name: item.name, logoPath: logoPath, colorHex: item.colorHex))
             }
@@ -246,7 +250,10 @@ enum BackupManager {
                 existing.teamID = item.teamID
                 existing.number = item.number
                 existing.name = item.name
-                if let imagePath { existing.imagePath = imagePath }
+                if let imagePath {
+                    if let oldPath = existing.imagePath { ImageStorage.delete(named: oldPath) }
+                    existing.imagePath = imagePath
+                }
             } else {
                 context.insert(Player(id: item.id, teamID: item.teamID, number: item.number, name: item.name, imagePath: imagePath))
             }
