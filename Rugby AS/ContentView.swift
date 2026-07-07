@@ -19,6 +19,7 @@ struct ContentView: View {
     @State private var selectedFilter: MatchFilter = .all
     @State private var selectedMatch: Match?
     @State private var isTeamListPresented = false
+    @State private var isTournamentExportPresented = false
 
     private enum MatchFilter: String, CaseIterable, Identifiable {
         case all
@@ -120,6 +121,9 @@ struct ContentView: View {
                     CreateMatchView()
                 }
             }
+            .sheet(isPresented: $isTournamentExportPresented) {
+                TournamentCSVExportSheet()
+            }
             .alert(
                 "この試合を削除しますか？",
                 isPresented: Binding(
@@ -189,6 +193,20 @@ struct ContentView: View {
                         .clipShape(Circle())
                         .overlay(Circle().stroke(Color.white.opacity(0.14), lineWidth: 1))
                 }
+                .buttonStyle(.plain)
+
+                Button {
+                    isTournamentExportPresented = true
+                } label: {
+                    Image(systemName: "square.and.arrow.up")
+                        .font(.title3.weight(.bold))
+                        .foregroundStyle(.white)
+                        .frame(width: 46, height: 46)
+                        .background(Color.white.opacity(0.08))
+                        .clipShape(Circle())
+                        .overlay(Circle().stroke(Color.white.opacity(0.14), lineWidth: 1))
+                }
+                .accessibilityLabel("大会ごとのCSV書き出し")
                 .buttonStyle(.plain)
 
                 Spacer()

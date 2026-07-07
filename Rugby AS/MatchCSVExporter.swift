@@ -30,6 +30,9 @@ struct MatchCSVFile: Transferable {
 }
 
 enum MatchCSVExporter {
+    private static let headerLine =
+        "大会,試合日,ホーム,アウェイ,前後半,時間,カテゴリ,カテゴリID,チーム,背番号,選手名,結果,継続秒"
+
     static func makeFile(
         match: Match,
         events: [StatEvent],
@@ -39,19 +42,70 @@ enum MatchCSVExporter {
     ) -> MatchCSVFile {
         let homeName = teamName(for: match.homeTeamID, in: teams)
         let awayName = teamName(for: match.awayTeamID, in: teams)
-        let dateText = dateFormatter.string(from: match.playedAt)
 
-        var lines: [String] = [
-            "大会,試合日,ホーム,アウェイ,前後半,時間,カテゴリ,カテゴリID,チーム,背番号,選手名,結果,継続秒"
-        ]
+        let lines = [headerLine] + rowLines(
+            match: match,
+            events: events,
+            teams: teams,
+            players: players,
+            tournamentName: tournamentName
+        )
+
+        let safeName = sanitizedFileName(
+            "\(homeName)_vs_\(awayName)_\(fileDateFormatter.string(from: match.playedAt)).csv"
+        )
+
+        return MatchCSVFile(fileName: safeName, csvText: lines.joined(separator: "\n") + "\n")
+    }
+
+    /// 大会の全試合を1つのCSVにまとめる(試合日の古い順)
+    static func makeTournamentFile(
+        tournamentName: String,
+        matches: [Match],
+        events: [StatEvent],
+        teams: [Team],
+        players: [Player]
+    ) -> MatchCSVFile {
+        var lines = [headerLine]
+
+        let sortedMatches = matches.sorted { $0.playedAt < $1.playedAt }
+        for match in sortedMatches {
+            let matchEvents = events.filter { $0.matchID == match.id }
+            lines += rowLines(
+                match: match,
+                events: matchEvents,
+                teams: teams,
+                players: players,
+                tournamentName: tournamentName
+            )
+        }
+
+        let safeName = sanitizedFileName(
+            "\(tournamentName)_全試合_\(fileDateFormatter.string(from: Date())).csv"
+        )
+
+        return MatchCSVFile(fileName: safeName, csvText: lines.joined(separator: "\n") + "\n")
+    }
+
+    // 1試合分の行(ヘッダーなし)。単体書き出しと大会一括の両方から使う
+    private static func rowLines(
+        match: Match,
+        events: [StatEvent],
+        teams: [Team],
+        players: [Player],
+        tournamentName: String
+    ) -> [String] {
+        let homeName = teamName(for: match.homeTeamID, in: teams)
+        let awayName = teamName(for: match.awayTeamID, in: teams)
+        let dateText = dateFormatter.string(from: match.playedAt)
 
         let rows = events
             .filter { $0.category != "match_state" }
             .sorted { sortKey($0) < sortKey($1) }
 
-        for event in rows {
+        return rows.map { event in
             let player = players.first { $0.id == event.playerID }
-            let line = [
+            return [
                 tournamentName,
                 dateText,
                 homeName,
@@ -68,15 +122,13 @@ enum MatchCSVExporter {
             ]
             .map(escaped)
             .joined(separator: ",")
-
-            lines.append(line)
         }
+    }
 
-        let safeName = "\(homeName)_vs_\(awayName)_\(fileDateFormatter.string(from: match.playedAt)).csv"
+    private static func sanitizedFileName(_ name: String) -> String {
+        name
             .replacingOccurrences(of: "/", with: "-")
             .replacingOccurrences(of: ":", with: "-")
-
-        return MatchCSVFile(fileName: safeName, csvText: lines.joined(separator: "\n") + "\n")
     }
 
     // ポゼッションは seconds が「継続秒数」なので、開始時刻の方を表示に使う
