@@ -79,7 +79,7 @@ struct TournamentListView: View {
                             tournamentRow(tournament)
                         }
                     } footer: {
-                        Text("共有ボタンで、その大会の全試合の記録を1つのCSVにまとめて書き出せます。")
+                        Text("大会をタップすると、順位表・ランキング・試合一覧を確認できます。CSV書き出しは大会の詳細画面から。")
                     }
                 }
             }
@@ -152,28 +152,21 @@ struct TournamentListView: View {
     private func tournamentRow(_ tournament: Tournament) -> some View {
         let matchCount = matches.count { $0.tournamentID == tournament.id }
 
-        return HStack {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(tournament.officialName)
-                Text("\(matchCount)試合")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
+        return NavigationLink {
+            TournamentDetailView(tournament: tournament)
+        } label: {
+            HStack(spacing: 10) {
+                Image(systemName: "trophy.fill")
+                    .foregroundStyle(.yellow)
+                    .frame(width: 24)
 
-            Spacer()
-
-            ShareLink(
-                item: TournamentCSVExportRequest(
-                    container: modelContext.container,
-                    tournamentID: tournament.id,
-                    tournamentName: tournament.officialName
-                ),
-                preview: SharePreview("\(tournament.officialName) 全試合CSV")
-            ) {
-                Image(systemName: "square.and.arrow.up")
-                    .foregroundStyle(matchCount == 0 ? Color.secondary.opacity(0.4) : Color.accentColor)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(tournament.officialName)
+                    Text("\(matchCount)試合")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
             }
-            .disabled(matchCount == 0)
         }
         .swipeActions(edge: .trailing, allowsFullSwipe: false) {
             Button("削除", role: .destructive) {
