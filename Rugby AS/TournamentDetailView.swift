@@ -130,28 +130,34 @@ struct TournamentDetailView: View {
                     .foregroundStyle(.secondary)
             } else {
                 ForEach(Array(entries.enumerated()), id: \.element.id) { index, entry in
-                    HStack(spacing: 10) {
-                        rankBadge(index + 1)
-                        playerThumbnail(imagePath: entry.playerImagePath)
-
-                        VStack(alignment: .leading, spacing: 1) {
-                            Text(entry.playerName)
-                                .font(.subheadline.weight(.semibold))
-                                .lineLimit(1)
-                            Text(entry.teamName)
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                                .lineLimit(1)
+                    NavigationLink {
+                        if let player = players.first(where: { $0.id == entry.id }) {
+                            PlayerDetailView(player: player)
                         }
+                    } label: {
+                        HStack(spacing: 10) {
+                            rankBadge(index + 1)
+                            playerThumbnail(imagePath: entry.playerImagePath)
 
-                        Spacer()
+                            VStack(alignment: .leading, spacing: 1) {
+                                Text(entry.playerName)
+                                    .font(.subheadline.weight(.semibold))
+                                    .lineLimit(1)
+                                Text(entry.teamName)
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                    .lineLimit(1)
+                            }
 
-                        HStack(alignment: .firstTextBaseline, spacing: 3) {
-                            Text("\(entry.value)")
-                                .font(.title3.weight(.black).monospacedDigit())
-                            Text(unit)
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
+                            Spacer()
+
+                            HStack(alignment: .firstTextBaseline, spacing: 3) {
+                                Text("\(entry.value)")
+                                    .font(.title3.weight(.black).monospacedDigit())
+                                Text(unit)
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
                         }
                     }
                 }

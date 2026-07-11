@@ -560,6 +560,18 @@ private struct PlayerRow: View {
                 }
                 .buttonStyle(.plain)
             }
+
+            // 個人成績の画面へ(名前入力の邪魔をしないよう、専用ボタンで)
+            NavigationLink {
+                PlayerDetailView(player: player)
+            } label: {
+                Image(systemName: "chart.bar.fill")
+                    .font(.subheadline)
+                    .foregroundStyle(Color.accentColor)
+            }
+            .buttonStyle(.plain)
+            .frame(width: 30)
+            .accessibilityLabel("個人成績を見る")
         }
         .onChange(of: photoPickerItem) { _, newItem in
             handleSelectedPhoto(newItem)
