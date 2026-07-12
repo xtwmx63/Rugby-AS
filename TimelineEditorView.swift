@@ -542,6 +542,7 @@ struct TimelineEditorView: View {
     @State private var timelineScrollOffset: CGFloat = 0
     @State private var isScrubbingTimeline = false
     @State private var isMatchClockSettingsPresented = false
+    @State private var isHighlightExportPresented = false
     @State private var matchClockSettings: TimelineMatchClockSettings = .standard
     // トラック連続再生: 選択中の行と、再生する区間のリスト・現在位置
     @State private var selectedPlaybackTrack: TimelineTrackType?
@@ -588,7 +589,12 @@ struct TimelineEditorView: View {
                 VStack(spacing: 10) {
                     TimelineHeaderView(
                         onBack: { dismiss() },
-                        onExport: { }
+                        onExport: {
+                            // 書き出し中に映像が動いていると紛らわしいので止める
+                            videoPlayer?.pause()
+                            viewModel.isPlaying = false
+                            isHighlightExportPresented = true
+                        }
                     )
 
                     VideoPreviewCard(
@@ -748,6 +754,12 @@ struct TimelineEditorView: View {
                 )
                 .presentationDetents([.large])
             }
+        }
+        .sheet(isPresented: $isHighlightExportPresented) {
+            HighlightExportSheet(
+                clips: viewModel.timelineClips,
+                videoSegments: viewModel.videoSegments
+            )
         }
         .alert("操作できませんでした", isPresented: Binding(
             get: { editorErrorMessage != nil },
