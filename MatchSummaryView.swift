@@ -86,7 +86,7 @@ struct MatchSummaryView: View {
             .filter { $0.teamID == match.homeTeamID || $0.teamID == match.awayTeamID }
             .sorted { lhs, rhs in
                 if lhs.teamID == rhs.teamID {
-                    return lhs.number < rhs.number
+                    return (lhs.number ?? Int.max) < (rhs.number ?? Int.max)
                 }
                 return lhs.teamID == match.homeTeamID
             }
@@ -1597,11 +1597,7 @@ struct MatchSummaryView: View {
         guard let playerID, let player = players.first(where: { $0.id == playerID }) else {
             return "未設定"
         }
-        let number = MatchNumbering.number(for: player, matchID: match.id, lineups: matchLineups)
-        if let name = player.name, !name.isEmpty {
-            return "#\(number) \(name)"
-        }
-        return "#\(number) 名前未設定"
+        return MatchNumbering.label(for: player, matchID: match.id, lineups: matchLineups)
     }
 
     private func percentText(_ value: Double) -> String {

@@ -217,8 +217,8 @@ struct SubstitutionAddSheet: View {
         players
             .filter { $0.teamID == selectedTeamID }
             .sorted {
-                MatchNumbering.number(for: $0, matchID: match.id, lineups: lineups)
-                    < MatchNumbering.number(for: $1, matchID: match.id, lineups: lineups)
+                (MatchNumbering.number(for: $0, matchID: match.id, lineups: lineups) ?? Int.max)
+                    < (MatchNumbering.number(for: $1, matchID: match.id, lineups: lineups) ?? Int.max)
             }
     }
 

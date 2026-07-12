@@ -359,7 +359,7 @@ struct TournamentDetailView: View {
                 guard let player = players.first(where: { $0.id == playerID }) else { return nil }
                 return RankingEntry(
                     id: playerID,
-                    playerName: player.name ?? "#\(player.number)",
+                    playerName: player.name ?? player.number.map { "#\($0)" } ?? "名前未設定",
                     playerImagePath: player.imagePath,
                     teamName: teamName(for: player.teamID),
                     value: total

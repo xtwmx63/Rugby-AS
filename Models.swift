@@ -30,12 +30,14 @@ final class Team {
 final class Player {
     @Attribute(.unique) var id: UUID
     var teamID: UUID
-    var number: Int
+    // 背番号。nil = 背番号なし(試合に登録されていない選手など)。
+    // 試合ごとの実際の番号はメンバー表(MatchLineup.number)に控えられる。
+    var number: Int?
     var name: String?
     // 顔写真のファイル名（ドキュメントディレクトリ配下）。nil で未設定。
     var imagePath: String?
 
-    init(id: UUID = UUID(), teamID: UUID, number: Int, name: String? = nil, imagePath: String? = nil) {
+    init(id: UUID = UUID(), teamID: UUID, number: Int?, name: String? = nil, imagePath: String? = nil) {
         self.id = id
         self.teamID = teamID
         self.number = number

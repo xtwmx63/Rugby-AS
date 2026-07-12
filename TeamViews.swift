@@ -361,17 +361,29 @@ struct TeamEditorView: View {
     private var players: [Player] {
         allPlayers
             .filter { $0.teamID == team.id }
-            .sorted { $0.number < $1.number }
+            .sorted { ($0.number ?? Int.max) < ($1.number ?? Int.max) }
     }
 
-    // チーム内で重複している背番号(行にオレンジで警告表示)
+    // チーム内で重複している背番号(行にオレンジで警告表示)。背番号なしは対象外
     private var duplicatedNumbers: Set<Int> {
         var seen: Set<Int> = []
         var duplicated: Set<Int> = []
-        for player in players where !seen.insert(player.number).inserted {
-            duplicated.insert(player.number)
+        for player in players {
+            guard let number = player.number else { continue }
+            if !seen.insert(number).inserted {
+                duplicated.insert(number)
+            }
         }
         return duplicated
+    }
+
+    // 削除ダイアログ用の表示名
+    private func playerLabel(_ player: Player) -> String {
+        let name = (player.name?.isEmpty == false) ? player.name! : "名前未設定"
+        if let number = player.number {
+            return "#\(number) \(name)"
+        }
+        return name
     }
 
     var body: some View {
@@ -414,7 +426,7 @@ struct TeamEditorView: View {
                 ForEach(players) { player in
                     PlayerRow(
                         player: player,
-                        isNumberDuplicated: duplicatedNumbers.contains(player.number),
+                        isNumberDuplicated: player.number.map { duplicatedNumbers.contains($0) } ?? false,
                         onDelete: {
                             requestPlayerDeletion(player)
                         }
@@ -467,7 +479,7 @@ struct TeamEditorView: View {
                 }
             },
             message: { player in
-                Text("「#\(player.number) \(player.name ?? "名前未設定")」を名簿から削除します。写真も消えます。")
+                Text("「\(playerLabel(player))」を名簿から削除します。写真も消えます。")
             }
         )
         .alert(
@@ -483,7 +495,7 @@ struct TeamEditorView: View {
                 }
             },
             message: { player in
-                Text("「#\(player.number) \(player.name ?? "名前未設定")」は試合の記録(得点・メンバー表・交代)で使われているため削除できません。")
+                Text("「\(playerLabel(player))」は試合の記録(得点・メンバー表・交代)で使われているため削除できません。")
             }
         )
     }
@@ -615,7 +627,8 @@ struct TeamEditorView: View {
     }
 
     private func ensureInitialPlayers() {
-        let existingNumbers = Set(players.map(\.number))
+        let existingNumbers = Set(players.compactMap(\.number))
+        guard players.isEmpty else { return }
         for number in 1...15 where !existingNumbers.contains(number) {
             let player = Player(teamID: team.id, number: number)
             modelContext.insert(player)
@@ -623,7 +636,7 @@ struct TeamEditorView: View {
     }
 
     private func addPlayerSlot() {
-        let nextNumber = (players.map(\.number).max() ?? 0) + 1
+        let nextNumber = (players.compactMap(\.number).max() ?? 0) + 1
         let player = Player(teamID: team.id, number: nextNumber)
         modelContext.insert(player)
     }
@@ -650,12 +663,15 @@ private struct PlayerRow: View {
 
             // 背番号はタップで変更(大会前にここで事前登録しておく)
             Button {
-                numberText = "\(player.number)"
+                numberText = player.number.map(String.init) ?? ""
                 isEditingNumber = true
             } label: {
-                Text("#\(player.number)")
+                Text(player.number.map { "#\($0)" } ?? "ー")
                     .font(.headline.monospacedDigit())
-                    .foregroundStyle(isNumberDuplicated ? Color.orange : Color.accentColor)
+                    .foregroundStyle(
+                        isNumberDuplicated ? Color.orange
+                            : (player.number == nil ? Color.secondary : Color.accentColor)
+                    )
             }
             .buttonStyle(.plain)
             .frame(width: 44, alignment: .leading)
@@ -699,17 +715,22 @@ private struct PlayerRow: View {
             Button("キャンセル", role: .cancel) { }
         }
         .alert("背番号を変更", isPresented: $isEditingNumber) {
-            TextField("番号", text: $numberText)
+            TextField("番号(空欄で背番号なし)", text: $numberText)
                 .keyboardType(.numberPad)
             Button("保存") {
-                if let number = Int(numberText), number > 0 {
+                let trimmed = numberText.trimmingCharacters(in: .whitespaces)
+                if trimmed.isEmpty {
+                    // 空欄 = 背番号なし(試合に登録されていない選手など)
+                    player.number = nil
+                    try? modelContext.save()
+                } else if let number = Int(trimmed), number > 0 {
                     player.number = number
                     try? modelContext.save()
                 }
             }
             Button("キャンセル", role: .cancel) { }
         } message: {
-            Text("この選手の背番号を入力してください。以後の試合のメンバー登録に自動で使われます(登録済みの試合は変わりません)。")
+            Text("空欄のまま保存すると「背番号なし」になります。以後の試合のメンバー登録に自動で使われます(登録済みの試合は変わりません)。")
         }
         .swipeActions(edge: .trailing, allowsFullSwipe: false) {
             if let onDelete {

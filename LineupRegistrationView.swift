@@ -269,7 +269,7 @@ struct LineupRegistrationView: View {
 
     private func playerCard(player: Player, entry: MatchLineup, onTap: @escaping () -> Void) -> some View {
         let matchNumber = entry.number ?? player.number
-        let isDuplicated = duplicatedNumbers.contains(matchNumber)
+        let isDuplicated = matchNumber.map { duplicatedNumbers.contains($0) } ?? false
 
         return VStack(spacing: 4) {
             // 写真タップ = 外す(確認あり)
@@ -281,10 +281,10 @@ struct LineupRegistrationView: View {
 
             // 番号タップ = この試合の背番号を変更
             Button {
-                numberText = "\(matchNumber)"
+                numberText = matchNumber.map(String.init) ?? ""
                 numberEditingEntry = entry
             } label: {
-                Text("#\(matchNumber)")
+                Text(matchNumber.map { "#\($0)" } ?? "ー")
                     .font(.caption.monospacedDigit().weight(.bold))
                     .foregroundStyle(isDuplicated ? Color.white : Color.accentColor)
                     .padding(.horizontal, 9)
@@ -312,8 +312,8 @@ struct LineupRegistrationView: View {
         var seen: Set<Int> = []
         var duplicated: Set<Int> = []
         for entry in teamLineupEntries {
-            guard let player = player(for: entry) else { continue }
-            let number = entry.number ?? player.number
+            guard let player = player(for: entry),
+                  let number = entry.number ?? player.number else { continue }
             if !seen.insert(number).inserted {
                 duplicated.insert(number)
             }
@@ -385,7 +385,7 @@ struct LineupRegistrationView: View {
                             addingContext = nil
                         } label: {
                             HStack {
-                                Text("#\(player.number)")
+                                Text(player.number.map { "#\($0)" } ?? "ー")
                                     .font(.headline.monospacedDigit())
                                     .frame(width: 48, alignment: .leading)
                                 Text(player.name ?? "名前未設定")

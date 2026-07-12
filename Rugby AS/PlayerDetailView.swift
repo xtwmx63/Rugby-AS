@@ -45,7 +45,7 @@ struct PlayerDetailView: View {
                     Text(displayName)
                         .font(.title3.weight(.black))
                     HStack(spacing: 8) {
-                        Text("#\(player.number)")
+                        Text(player.number.map { "#\($0)" } ?? "背番号なし")
                             .font(.subheadline.weight(.bold).monospacedDigit())
                             .foregroundStyle(.secondary)
                         Text(teamName(for: player.teamID))
@@ -313,7 +313,10 @@ struct PlayerDetailView: View {
     // MARK: - 小さな部品
 
     private var displayName: String {
-        player.name?.isEmpty == false ? player.name! : "#\(player.number)"
+        if let name = player.name, !name.isEmpty {
+            return name
+        }
+        return player.number.map { "#\($0)" } ?? "名前未設定"
     }
 
     private func teamName(for teamID: UUID) -> String {

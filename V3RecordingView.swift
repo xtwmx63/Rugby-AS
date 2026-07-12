@@ -69,7 +69,7 @@ struct V3RecordingView: View {
     private var selectedTeamPlayers: [Player] {
         allPlayers
             .filter { $0.teamID == selectedInputTeam }
-            .sorted { $0.number < $1.number }
+            .sorted { ($0.number ?? Int.max) < ($1.number ?? Int.max) }
     }
 
     private var scoreEvents: [StatEvent] {
@@ -813,7 +813,7 @@ struct V3RecordingView: View {
         } label: {
             VStack(spacing: 6) {
                 playerAvatar(player: player, isSelected: isSelected)
-                Text("#\(MatchNumbering.number(for: player, matchID: match.id, lineups: matchLineupEntries))")
+                Text(MatchNumbering.numberLabel(for: player, matchID: match.id, lineups: matchLineupEntries))
                     .font(.caption.weight(.bold).monospacedDigit())
                 Text(player.name ?? "名前未設定")
                     .font(.caption2)
@@ -863,7 +863,7 @@ struct V3RecordingView: View {
         } label: {
             VStack(spacing: 6) {
                 playerAvatar(player: player, isSelected: isSelected)
-                Text("#\(MatchNumbering.number(for: player, matchID: match.id, lineups: matchLineupEntries))")
+                Text(MatchNumbering.numberLabel(for: player, matchID: match.id, lineups: matchLineupEntries))
                     .font(.caption.weight(.bold).monospacedDigit())
                 Text(player.name ?? "名前未設定")
                     .font(.caption2)
@@ -1099,7 +1099,7 @@ struct V3RecordingView: View {
                 if let lOrder = orderByPlayer[lhs.id], let rOrder = orderByPlayer[rhs.id] {
                     return lOrder < rOrder
                 }
-                return lhs.number < rhs.number
+                return (lhs.number ?? Int.max) < (rhs.number ?? Int.max)
             }
     }
 

@@ -35,7 +35,7 @@ struct RecordingView: View {
             .filter { $0.teamID == match.homeTeamID || $0.teamID == match.awayTeamID }
             .sorted { lhs, rhs in
                 if lhs.teamID == rhs.teamID {
-                    return lhs.number < rhs.number
+                    return (lhs.number ?? Int.max) < (rhs.number ?? Int.max)
                 }
                 return lhs.teamID == match.homeTeamID
             }

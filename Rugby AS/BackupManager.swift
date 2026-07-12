@@ -44,7 +44,8 @@ struct BackupTeam: Codable {
 struct BackupPlayer: Codable {
     var id: UUID
     var teamID: UUID
-    var number: Int
+    // nil = 背番号なし(古いバックアップは必ず数値が入っている)
+    var number: Int?
     var name: String?
     var imageBase64: String?
 }

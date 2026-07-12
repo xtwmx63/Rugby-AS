@@ -43,9 +43,10 @@ enum MatchNumbering {
         }
 
         // 1) メンバー表にあるが番号未設定の行に、現在の番号を書き込む
+        //    (背番号なしの選手はそのまま=書き込むものがない)
         for entry in lineups where entry.number == nil && isTargetMatch(entry.matchID) {
-            if let player = playersByID[entry.playerID] {
-                entry.number = player.number
+            if let number = playersByID[entry.playerID]?.number {
+                entry.number = number
                 didChange = true
             }
         }
@@ -69,7 +70,8 @@ enum MatchNumbering {
         for pair in appearingPairs {
             let key = "\(pair.matchID)|\(pair.playerID)"
             guard !knownPairs.contains(key),
-                  let player = playersByID[pair.playerID] else {
+                  let player = playersByID[pair.playerID],
+                  let number = player.number else {
                 continue
             }
             knownPairs.insert(key)
@@ -79,7 +81,7 @@ enum MatchNumbering {
                 playerID: pair.playerID,
                 role: numberSnapshotRole,
                 order: 0,
-                number: player.number
+                number: number
             ))
             didChange = true
         }
@@ -90,16 +92,30 @@ enum MatchNumbering {
     }
 
     /// その試合での背番号。メンバー表に試合用の番号があればそれ、なければ基本番号。
-    static func number(for player: Player, matchID: UUID, lineups: [MatchLineup]) -> Int {
+    /// nil = 背番号なし。
+    static func number(for player: Player, matchID: UUID, lineups: [MatchLineup]) -> Int? {
         lineups.first { $0.matchID == matchID && $0.playerID == player.id }?.number ?? player.number
     }
 
-    /// 「#7 山田」形式の表示名(名前未登録なら番号のみ)
+    /// 「#7」形式の番号表示。背番号なしは「ー」
+    static func numberText(_ number: Int?) -> String {
+        number.map { "#\($0)" } ?? "ー"
+    }
+
+    /// その試合での「#7」表示(背番号なしは「ー」)
+    static func numberLabel(for player: Player, matchID: UUID, lineups: [MatchLineup]) -> String {
+        numberText(number(for: player, matchID: matchID, lineups: lineups))
+    }
+
+    /// 「#7 山田」形式の表示名。番号なしなら名前のみ、両方なければ「名前未設定」
     static func label(for player: Player, matchID: UUID, lineups: [MatchLineup]) -> String {
         let number = number(for: player, matchID: matchID, lineups: lineups)
-        if let name = player.name, !name.isEmpty {
-            return "#\(number) \(name)"
+        let name = (player.name?.isEmpty == false) ? player.name : nil
+        switch (number, name) {
+        case (let number?, let name?): return "#\(number) \(name)"
+        case (nil, let name?): return name
+        case (let number?, nil): return "#\(number)"
+        case (nil, nil): return "名前未設定"
         }
-        return "#\(number)"
     }
 }

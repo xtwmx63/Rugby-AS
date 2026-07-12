@@ -110,8 +110,8 @@ enum MatchCSVExporter {
 
         return rows.map { event in
             let player = players.first { $0.id == event.playerID }
-            // 背番号はその試合のメンバー表の番号(なければ基本番号)
-            let number = player.map {
+            // 背番号はその試合のメンバー表の番号(なければ基本番号。背番号なしは空欄)
+            let number = player.flatMap {
                 MatchNumbering.number(for: $0, matchID: match.id, lineups: lineups)
             }
             return [
