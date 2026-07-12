@@ -56,7 +56,31 @@ enum VideoStorage {
             throw error
         }
 
+        excludeFromBackup(destinationURL)
         return name
+    }
+
+    /// 動画をiCloudバックアップの対象から外す。
+    /// 試合動画は数GBあり、含めるとユーザーのiCloud容量を圧迫するため。
+    /// (動画は写真アプリ等から再取り込みできるので、消えても復元手段がある)
+    nonisolated private static func excludeFromBackup(_ url: URL) {
+        var target = url
+        var values = URLResourceValues()
+        values.isExcludedFromBackup = true
+        try? target.setResourceValues(values)
+    }
+
+    /// 既に取り込み済みの動画にも、まとめてバックアップ除外を適用する(起動時に1回)
+    nonisolated static func excludeAllVideosFromBackup() {
+        guard let files = try? FileManager.default.contentsOfDirectory(
+            at: directory,
+            includingPropertiesForKeys: nil
+        ) else {
+            return
+        }
+        for file in files {
+            excludeFromBackup(file)
+        }
     }
 
     nonisolated static func videoNames(for matchID: UUID) -> [String] {

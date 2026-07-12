@@ -262,8 +262,7 @@ struct ContentView: View {
 
     private var bottomTabBar: some View {
         HStack {
-            bottomTabItem("ホーム", systemImage: "house", isSelected: false)
-            bottomTabItem("記録", systemImage: "pencil", isSelected: false)
+            // 「ホーム」「記録」は中身がないため置かない(押せないボタンを残さない)
             bottomTabItem("試合一覧", systemImage: "trophy", isSelected: true)
             NavigationLink {
                 TeamListView()
