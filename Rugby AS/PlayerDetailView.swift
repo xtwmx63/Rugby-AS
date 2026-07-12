@@ -19,6 +19,7 @@ struct PlayerDetailView: View {
     @Query private var allMatches: [Match]
     @Query private var allEvents: [StatEvent]
     @Query private var allLineups: [MatchLineup]
+    @Query private var allSubstitutions: [Substitution]
     @Query private var teams: [Team]
     @Query private var tournaments: [Tournament]
 
@@ -70,6 +71,8 @@ struct PlayerDetailView: View {
                 statTile(value: "\(totals.tries)", label: "トライ")
                 Divider()
                 statTile(value: "\(totals.points)", label: "得点")
+                Divider()
+                statTile(value: totalPlayingMinutesText, label: "出場時間")
             }
             .padding(.vertical, 4)
 
@@ -83,16 +86,46 @@ struct PlayerDetailView: View {
             .font(.subheadline)
         } header: {
             Label("通算成績", systemImage: "chart.bar.fill")
+        } footer: {
+            Text("出場時間は、スタメン(メンバー表)が登録された試合の記録と交代から自動計算します。")
         }
+    }
+
+    // その試合での出場分数(スタメン未登録の試合は計算不可 = nil)
+    private func playingMinutes(matchID: UUID) -> Int? {
+        let result = PlayingTimeCalculator.calculate(
+            matchID: matchID,
+            lineups: allLineups,
+            substitutions: allSubstitutions,
+            events: allEvents
+        )
+        guard result.hasStarterInfo else { return nil }
+        return result.minutesByPlayer[player.id] ?? 0
+    }
+
+    private var totalPlayingMinutesText: String {
+        var total = 0
+        var hasAnyComputableMatch = false
+        for match in playerMatches {
+            if let minutes = playingMinutes(matchID: match.id) {
+                total += minutes
+                hasAnyComputableMatch = true
+            }
+        }
+        return hasAnyComputableMatch ? "\(total)分" : "—"
     }
 
     private func statTile(value: String, label: String) -> some View {
         VStack(spacing: 3) {
             Text(value)
                 .font(.title2.weight(.black).monospacedDigit())
+                .lineLimit(1)
+                .minimumScaleFactor(0.6)
             Text(label)
                 .font(.caption)
                 .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.7)
         }
         .frame(maxWidth: .infinity)
     }
@@ -164,6 +197,12 @@ struct PlayerDetailView: View {
                     .minimumScaleFactor(0.7)
 
                 Spacer()
+
+                if let minutes = playingMinutes(matchID: match.id) {
+                    Text("\(minutes)分")
+                        .font(.caption.weight(.bold).monospacedDigit())
+                        .foregroundStyle(.secondary)
+                }
 
                 if !contribution.isEmpty {
                     Text(contribution)

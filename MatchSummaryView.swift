@@ -16,6 +16,7 @@ struct MatchSummaryView: View {
     @Query private var matchEvents: [StatEvent]
     @Query private var teams: [Team]
     @Query private var tournaments: [Tournament]
+    @Query private var allSubstitutions: [Substitution]
 
     let match: Match
 
@@ -29,6 +30,8 @@ struct MatchSummaryView: View {
     @State private var marginPerspectiveOverride: Bool?
     // 「画像で共有」で生成したサマリー画像(セット中はプレビューシートを表示)
     @State private var exportedSummaryImage: UIImage?
+    // 交代の追加シート
+    @State private var isSubstitutionSheetPresented = false
 
     private enum SummaryScope: String, CaseIterable, Identifiable {
         case all
@@ -204,6 +207,7 @@ struct MatchSummaryView: View {
                         scoringProgressionCard
                         scoreMarginCard
                         scorerTimelineCard
+                        substitutionCard
                     }
                     .padding(.horizontal, 8)
                     .padding(.top, 2)
@@ -1231,6 +1235,118 @@ struct MatchSummaryView: View {
             }
         }
         .frame(height: chartHeight)
+    }
+
+    // MARK: - 交代カード
+
+    private var matchSubstitutions: [Substitution] {
+        allSubstitutions
+            .filter { $0.matchID == match.id }
+            .sorted { ($0.half, $0.minute) < ($1.half, $1.minute) }
+    }
+
+    private var substitutionCard: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Label("交代", systemImage: "arrow.left.arrow.right")
+                    .font(.headline.weight(.black))
+                    .foregroundStyle(.white)
+                Spacer()
+                Button {
+                    isSubstitutionSheetPresented = true
+                } label: {
+                    Label("追加", systemImage: "plus.circle.fill")
+                        .font(.caption.weight(.black))
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 10)
+                        .frame(height: 28)
+                        .background(Color.blue.opacity(0.72))
+                        .clipShape(Capsule())
+                }
+                .buttonStyle(.plain)
+            }
+
+            Divider()
+                .overlay(Color.white.opacity(0.18))
+
+            if matchSubstitutions.isEmpty {
+                Text("交代の記録がありません")
+                    .font(.subheadline)
+                    .foregroundStyle(.white.opacity(0.55))
+                    .frame(maxWidth: .infinity, alignment: .center)
+                    .padding(.vertical, 8)
+            } else {
+                ForEach(matchSubstitutions) { substitution in
+                    substitutionRow(substitution)
+                }
+            }
+        }
+        .padding(12)
+        .summaryCard()
+        .frame(maxWidth: .infinity)
+        .sheet(isPresented: $isSubstitutionSheetPresented) {
+            SubstitutionAddSheet(
+                match: match,
+                teams: teams,
+                players: players,
+                initialHalf: selectedScope.half ?? 0,
+                initialMinute: 0,
+                onAdd: { playerOutID, playerInID, half, minute in
+                    let substitution = Substitution(
+                        matchID: match.id,
+                        playerInID: playerInID,
+                        playerOutID: playerOutID,
+                        minute: minute,
+                        half: half
+                    )
+                    modelContext.insert(substitution)
+                    try? modelContext.save()
+                }
+            )
+            .presentationDetents([.large])
+        }
+    }
+
+    private func substitutionRow(_ substitution: Substitution) -> some View {
+        HStack(spacing: 8) {
+            Text("\(halfLabel(substitution.half)) \(substitution.minute)'")
+                .font(.caption.weight(.bold).monospacedDigit())
+                .foregroundStyle(.white.opacity(0.55))
+                .frame(width: 64, alignment: .leading)
+
+            Image(systemName: "arrow.down.circle.fill")
+                .foregroundStyle(.red)
+            Text(playerName(for: substitution.playerOutID))
+                .font(.subheadline)
+                .foregroundStyle(.white.opacity(0.6))
+                .lineLimit(1)
+                .minimumScaleFactor(0.7)
+
+            Image(systemName: "arrow.right")
+                .font(.caption.weight(.bold))
+                .foregroundStyle(.white.opacity(0.4))
+
+            Image(systemName: "arrow.up.circle.fill")
+                .foregroundStyle(.green)
+            Text(playerName(for: substitution.playerInID))
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(.white)
+                .lineLimit(1)
+                .minimumScaleFactor(0.7)
+
+            Spacer(minLength: 4)
+
+            Button {
+                modelContext.delete(substitution)
+                try? modelContext.save()
+            } label: {
+                Image(systemName: "trash")
+                    .font(.caption)
+                    .foregroundStyle(.white.opacity(0.45))
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(.vertical, 3)
     }
 
     private var scorerTimelineCard: some View {

@@ -89,6 +89,8 @@ struct BackupSubstitution: Codable {
     var playerInID: UUID
     var playerOutID: UUID
     var minute: Int
+    // 後から追加した列。古いバックアップには無いので任意(nil=前半)
+    var half: Int?
 }
 
 // 読み込み結果の件数(画面に表示する)
@@ -196,7 +198,8 @@ enum BackupManager {
                     matchID: $0.matchID,
                     playerInID: $0.playerInID,
                     playerOutID: $0.playerOutID,
-                    minute: $0.minute
+                    minute: $0.minute,
+                    half: $0.half
                 )
             }
         )
@@ -359,13 +362,15 @@ enum BackupManager {
                 existing.playerInID = item.playerInID
                 existing.playerOutID = item.playerOutID
                 existing.minute = item.minute
+                existing.half = item.half ?? 0
             } else {
                 context.insert(Substitution(
                     id: item.id,
                     matchID: item.matchID,
                     playerInID: item.playerInID,
                     playerOutID: item.playerOutID,
-                    minute: item.minute
+                    minute: item.minute,
+                    half: item.half ?? 0
                 ))
             }
             summary.substitutions += 1

@@ -150,18 +150,23 @@ final class Substitution {
     var playerInID: UUID
     var playerOutID: UUID
     var minute: Int
+    // 0 = 前半, 1 = 後半。minute はそのハーフ内の経過分。
+    // (StatEvent の half と同じ後付けカラム。既存データは前半扱い)
+    var half: Int = 0
 
     init(
         id: UUID = UUID(),
         matchID: UUID,
         playerInID: UUID,
         playerOutID: UUID,
-        minute: Int
+        minute: Int,
+        half: Int = 0
     ) {
         self.id = id
         self.matchID = matchID
         self.playerInID = playerInID
         self.playerOutID = playerOutID
         self.minute = minute
+        self.half = half
     }
 }

@@ -55,6 +55,7 @@ struct V3RecordingView: View {
     @State private var isSecondHalf = false
     @State private var isShowingFinishConfirmation = false
     @State private var isShowingHalfChangeConfirmation = false
+    @State private var isSubstitutionSheetPresented = false
 
     private let homeAccent = Color.blue
     private let awayAccent = Color.red
@@ -116,7 +117,10 @@ struct V3RecordingView: View {
                 possessionDashboard
                 inputTargetCard
                 actionGrid
-                undoButton
+                HStack(spacing: 8) {
+                    undoButton
+                    substitutionButton
+                }
             }
             .padding(.horizontal, 8)
             .padding(.top, 4)
@@ -178,6 +182,27 @@ struct V3RecordingView: View {
                 scoringEventForPlayerSelection = nil
             }
             .presentationDetents([.medium, .large])
+        }
+        .sheet(isPresented: $isSubstitutionSheetPresented) {
+            SubstitutionAddSheet(
+                match: match,
+                teams: teams,
+                players: allPlayers,
+                initialHalf: currentHalf,
+                initialMinute: timeState.elapsedSeconds(at: Date()) / 60,
+                onAdd: { playerOutID, playerInID, half, minute in
+                    let substitution = Substitution(
+                        matchID: match.id,
+                        playerInID: playerInID,
+                        playerOutID: playerOutID,
+                        minute: minute,
+                        half: half
+                    )
+                    modelContext.insert(substitution)
+                    try? modelContext.save()
+                }
+            )
+            .presentationDetents([.large])
         }
     }
 
@@ -569,6 +594,21 @@ struct V3RecordingView: View {
         .buttonStyle(.plain)
         .disabled(undoableLastEvent == nil)
         .opacity(undoableLastEvent == nil ? 0.45 : 1)
+    }
+
+    // 交代を今の試合時間で記録するボタン
+    private var substitutionButton: some View {
+        Button {
+            isSubstitutionSheetPresented = true
+        } label: {
+            Label("交代", systemImage: "arrow.left.arrow.right")
+                .font(.headline.weight(.bold))
+                .foregroundStyle(.cyan)
+                .frame(maxWidth: .infinity, minHeight: 36)
+                .background(Color.cyan.opacity(0.16))
+                .clipShape(RoundedRectangle(cornerRadius: 8))
+        }
+        .buttonStyle(.plain)
     }
 
     private var setPieceResultPanel: some View {
