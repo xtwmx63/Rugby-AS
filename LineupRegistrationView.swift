@@ -15,6 +15,9 @@ struct LineupRegistrationView: View {
     // ソート → 毎フレーム body 内で再 filter するのは重い。
     @Query private var allPlayers: [Player]
     @Query private var lineupEntries: [MatchLineup]
+    // 「前の試合からコピー」のためのコピー元探索用(全試合分)
+    @Query private var allMatches: [Match]
+    @Query private var everyLineupEntry: [MatchLineup]
 
     let match: Match
 
@@ -22,6 +25,9 @@ struct LineupRegistrationView: View {
     @State private var addingContext: AddingContext?
     @State private var pendingRemoval: MatchLineup?
     @State private var navigatesToRecording = false
+    // 背番号を編集中のメンバー表エントリ
+    @State private var numberEditingEntry: MatchLineup?
+    @State private var numberText = ""
 
     init(match: Match) {
         self.match = match
@@ -69,8 +75,26 @@ struct LineupRegistrationView: View {
             VStack(spacing: 16) {
                 teamHeader
                 teamToggle
+
+                // このチームのメンバーが空なら、前の試合のメンバー表を丸ごと流用できる
+                if teamLineupEntries.isEmpty, let source = copySourceMatch {
+                    Button {
+                        copyLineup(from: source)
+                    } label: {
+                        Label("前の試合からコピー(\(Self.copyDateFormatter.string(from: source.playedAt)))", systemImage: "doc.on.doc")
+                            .font(.subheadline.weight(.bold))
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.bordered)
+                }
+
                 sectionView(title: "スタメン", entries: starters, role: "starter")
                 sectionView(title: "リザーブ", entries: reserves, role: "reserve")
+
+                Text("背番号はタップで変更できます。この試合だけの番号で、チーム名簿の基本番号は変わりません。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
             }
             .padding(.horizontal)
             .padding(.vertical, 12)
@@ -93,6 +117,25 @@ struct LineupRegistrationView: View {
         }
         .sheet(item: $addingContext) { context in
             playerPickerSheet(role: context.role)
+        }
+        .alert("背番号を変更", isPresented: Binding(
+            get: { numberEditingEntry != nil },
+            set: { if !$0 { numberEditingEntry = nil } }
+        )) {
+            TextField("番号", text: $numberText)
+                .keyboardType(.numberPad)
+            Button("保存") {
+                if let number = Int(numberText), number > 0 {
+                    numberEditingEntry?.number = number
+                    try? modelContext.save()
+                }
+                numberEditingEntry = nil
+            }
+            Button("キャンセル", role: .cancel) {
+                numberEditingEntry = nil
+            }
+        } message: {
+            Text("この試合で着ける背番号を入力してください。")
         }
         .confirmationDialog(
             "この選手を外しますか？",
@@ -208,7 +251,7 @@ struct LineupRegistrationView: View {
             ], spacing: 12) {
                 ForEach(entries) { entry in
                     if let player = player(for: entry) {
-                        playerCard(player: player) {
+                        playerCard(player: player, entry: entry) {
                             pendingRemoval = entry
                         }
                     }
@@ -221,25 +264,58 @@ struct LineupRegistrationView: View {
         .clipShape(RoundedRectangle(cornerRadius: 12))
     }
 
-    private func playerCard(player: Player, onTap: @escaping () -> Void) -> some View {
-        Button(action: onTap) {
-            VStack(spacing: 4) {
+    private func playerCard(player: Player, entry: MatchLineup, onTap: @escaping () -> Void) -> some View {
+        let matchNumber = entry.number ?? player.number
+        let isDuplicated = duplicatedNumbers.contains(matchNumber)
+
+        return VStack(spacing: 4) {
+            // 写真タップ = 外す(確認あり)
+            Button(action: onTap) {
                 playerAvatar(player: player)
                     .frame(width: 56, height: 56)
-                Text("#\(player.number)")
-                    .font(.caption.monospacedDigit().weight(.bold))
-                Text(player.name ?? "名前未設定")
-                    .font(.caption2)
-                    .foregroundStyle(player.name == nil ? .secondary : .primary)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.7)
-                    .frame(width: 72)
             }
-            .padding(8)
-            .background(Color(.tertiarySystemBackground))
-            .clipShape(RoundedRectangle(cornerRadius: 8))
+            .buttonStyle(.plain)
+
+            // 番号タップ = この試合の背番号を変更
+            Button {
+                numberText = "\(matchNumber)"
+                numberEditingEntry = entry
+            } label: {
+                Text("#\(matchNumber)")
+                    .font(.caption.monospacedDigit().weight(.bold))
+                    .foregroundStyle(isDuplicated ? Color.white : Color.accentColor)
+                    .padding(.horizontal, 9)
+                    .padding(.vertical, 2)
+                    .background(
+                        Capsule().fill(isDuplicated ? Color.orange : Color.accentColor.opacity(0.14))
+                    )
+            }
+            .buttonStyle(.plain)
+
+            Text(player.name ?? "名前未設定")
+                .font(.caption2)
+                .foregroundStyle(player.name == nil ? .secondary : .primary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.7)
+                .frame(width: 72)
         }
-        .buttonStyle(.plain)
+        .padding(8)
+        .background(Color(.tertiarySystemBackground))
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+    }
+
+    // 同一チーム内で重複している試合用背番号(オレンジで警告表示)
+    private var duplicatedNumbers: Set<Int> {
+        var seen: Set<Int> = []
+        var duplicated: Set<Int> = []
+        for entry in teamLineupEntries {
+            guard let player = player(for: entry) else { continue }
+            let number = entry.number ?? player.number
+            if !seen.insert(number).inserted {
+                duplicated.insert(number)
+            }
+        }
+        return duplicated
     }
 
     @ViewBuilder
@@ -342,16 +418,65 @@ struct LineupRegistrationView: View {
     private func addPlayer(_ player: Player, role: String) {
         let existing = teamLineupEntries.filter { $0.role == role }
         let nextOrder = (existing.map { $0.order }.max() ?? -1) + 1
+        // ラグビーの慣習どおり、スタメンは1〜15、リザーブは16〜を初期値として振る
+        let defaultNumber = role == "starter" ? nextOrder + 1 : 16 + nextOrder
         let entry = MatchLineup(
             matchID: match.id,
             teamID: currentTeamID,
             playerID: player.id,
             role: role,
-            order: nextOrder
+            order: nextOrder,
+            number: defaultNumber
         )
         modelContext.insert(entry)
         try? modelContext.save()
     }
+
+    // MARK: - 前の試合からコピー
+
+    // コピー元: このチームのメンバー表がある、この試合より前の直近の試合。
+    // 同じ大会の試合を優先する(大会単位の登録メンバーを引き継ぐ想定)。
+    private var copySourceMatch: Match? {
+        let teamID = currentTeamID
+        let matchIDsWithLineup = Set(
+            everyLineupEntry
+                .filter { $0.teamID == teamID && $0.matchID != match.id }
+                .map(\.matchID)
+        )
+        let candidates = allMatches.filter {
+            matchIDsWithLineup.contains($0.id) && $0.playedAt <= match.playedAt && $0.id != match.id
+        }
+        let sameTournament = candidates
+            .filter { $0.tournamentID == match.tournamentID }
+            .max { $0.playedAt < $1.playedAt }
+        return sameTournament ?? candidates.max { $0.playedAt < $1.playedAt }
+    }
+
+    private func copyLineup(from source: Match) {
+        let teamID = currentTeamID
+        let sourceEntries = everyLineupEntry.filter {
+            $0.matchID == source.id && $0.teamID == teamID
+        }
+        for sourceEntry in sourceEntries {
+            let entry = MatchLineup(
+                matchID: match.id,
+                teamID: teamID,
+                playerID: sourceEntry.playerID,
+                role: sourceEntry.role,
+                order: sourceEntry.order,
+                number: sourceEntry.number
+            )
+            modelContext.insert(entry)
+        }
+        try? modelContext.save()
+    }
+
+    private static let copyDateFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "ja_JP")
+        formatter.dateFormat = "M/d"
+        return formatter
+    }()
 
     private struct AddingContext: Identifiable {
         let role: String

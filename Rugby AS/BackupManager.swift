@@ -81,6 +81,8 @@ struct BackupMatchLineup: Codable {
     var playerID: UUID
     var role: String
     var order: Int
+    // 後から追加した列(試合ごとの背番号)。古いバックアップには無いので任意
+    var number: Int?
 }
 
 struct BackupSubstitution: Codable {
@@ -189,7 +191,8 @@ enum BackupManager {
                     teamID: $0.teamID,
                     playerID: $0.playerID,
                     role: $0.role,
-                    order: $0.order
+                    order: $0.order,
+                    number: $0.number
                 )
             },
             substitutions: substitutions.map {
@@ -339,6 +342,7 @@ enum BackupManager {
                 existing.playerID = item.playerID
                 existing.role = item.role
                 existing.order = item.order
+                existing.number = item.number
             } else {
                 context.insert(MatchLineup(
                     id: item.id,
@@ -346,7 +350,8 @@ enum BackupManager {
                     teamID: item.teamID,
                     playerID: item.playerID,
                     role: item.role,
-                    order: item.order
+                    order: item.order,
+                    number: item.number
                 ))
             }
             summary.matchLineups += 1

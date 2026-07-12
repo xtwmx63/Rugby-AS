@@ -17,6 +17,7 @@ struct MatchSummaryView: View {
     @Query private var teams: [Team]
     @Query private var tournaments: [Tournament]
     @Query private var allSubstitutions: [Substitution]
+    @Query private var allLineups: [MatchLineup]
 
     let match: Match
 
@@ -116,6 +117,7 @@ struct MatchSummaryView: View {
             events: matchEvents,
             teams: teams,
             players: players,
+            lineups: matchLineups,
             tournamentName: tournaments.first { $0.id == match.tournamentID }?.officialName ?? "大会未設定"
         )
     }
@@ -230,7 +232,13 @@ struct MatchSummaryView: View {
             TimelineEditorView(match: match)
         }
         .sheet(item: $scoringEventForPlayerSelection) { event in
-            PlayerSelectionSheet(players: players, title: "得点者を選択") { player in
+            PlayerSelectionSheet(
+                players: players,
+                title: "得点者を選択",
+                numberFor: { player in
+                    MatchNumbering.number(for: player, matchID: match.id, lineups: matchLineups)
+                }
+            ) { player in
                 event.playerID = player?.id
                 try? modelContext.save()
                 scoringEventForPlayerSelection = nil
@@ -1289,6 +1297,7 @@ struct MatchSummaryView: View {
                 match: match,
                 teams: teams,
                 players: players,
+                lineups: matchLineups,
                 initialHalf: selectedScope.half ?? 0,
                 initialMinute: 0,
                 onAdd: { playerOutID, playerInID, half, minute in
@@ -1576,14 +1585,20 @@ struct MatchSummaryView: View {
         teams.first { $0.id == id }?.name ?? "チーム未設定"
     }
 
+    // この試合のメンバー表(試合ごとの背番号)
+    private var matchLineups: [MatchLineup] {
+        allLineups.filter { $0.matchID == match.id }
+    }
+
     private func playerName(for playerID: UUID?) -> String {
         guard let playerID, let player = players.first(where: { $0.id == playerID }) else {
             return "未設定"
         }
+        let number = MatchNumbering.number(for: player, matchID: match.id, lineups: matchLineups)
         if let name = player.name, !name.isEmpty {
-            return "#\(player.number) \(name)"
+            return "#\(number) \(name)"
         }
-        return "#\(player.number) 名前未設定"
+        return "#\(number) 名前未設定"
     }
 
     private func percentText(_ value: Double) -> String {

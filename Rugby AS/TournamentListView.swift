@@ -35,13 +35,16 @@ struct TournamentCSVExportRequest: Transferable {
                 .filter { matchIDs.contains($0.matchID) }
             let teams = try context.fetch(FetchDescriptor<Team>())
             let players = try context.fetch(FetchDescriptor<Player>())
+            let lineups = try context.fetch(FetchDescriptor<MatchLineup>())
+                .filter { matchIDs.contains($0.matchID) }
 
             let file = MatchCSVExporter.makeTournamentFile(
                 tournamentName: request.tournamentName,
                 matches: matches,
                 events: events,
                 teams: teams,
-                players: players
+                players: players,
+                lineups: lineups
             )
 
             let url = FileManager.default.temporaryDirectory.appendingPathComponent(file.fileName)

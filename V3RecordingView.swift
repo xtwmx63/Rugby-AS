@@ -176,7 +176,13 @@ struct V3RecordingView: View {
             UIApplication.shared.isIdleTimerDisabled = false
         }
         .sheet(item: $scoringEventForPlayerSelection) { event in
-            PlayerSelectionSheet(players: players(for: event), title: playerSelectionTitle(for: event)) { player in
+            PlayerSelectionSheet(
+                players: players(for: event),
+                title: playerSelectionTitle(for: event),
+                numberFor: { player in
+                    MatchNumbering.number(for: player, matchID: match.id, lineups: matchLineupEntries)
+                }
+            ) { player in
                 event.playerID = player?.id
                 try? modelContext.save()
                 scoringEventForPlayerSelection = nil
@@ -188,6 +194,7 @@ struct V3RecordingView: View {
                 match: match,
                 teams: teams,
                 players: allPlayers,
+                lineups: matchLineupEntries,
                 initialHalf: currentHalf,
                 initialMinute: timeState.elapsedSeconds(at: Date()) / 60,
                 onAdd: { playerOutID, playerInID, half, minute in
@@ -802,7 +809,7 @@ struct V3RecordingView: View {
         } label: {
             VStack(spacing: 6) {
                 playerAvatar(player: player, isSelected: isSelected)
-                Text("#\(player.number)")
+                Text("#\(MatchNumbering.number(for: player, matchID: match.id, lineups: matchLineupEntries))")
                     .font(.caption.weight(.bold).monospacedDigit())
                 Text(player.name ?? "名前未設定")
                     .font(.caption2)
@@ -852,7 +859,7 @@ struct V3RecordingView: View {
         } label: {
             VStack(spacing: 6) {
                 playerAvatar(player: player, isSelected: isSelected)
-                Text("#\(player.number)")
+                Text("#\(MatchNumbering.number(for: player, matchID: match.id, lineups: matchLineupEntries))")
                     .font(.caption.weight(.bold).monospacedDigit())
                 Text(player.name ?? "名前未設定")
                     .font(.caption2)

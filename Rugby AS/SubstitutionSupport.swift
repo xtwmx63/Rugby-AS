@@ -127,6 +127,8 @@ struct SubstitutionAddSheet: View {
     let match: Match
     let teams: [Team]
     let players: [Player]
+    // この試合のメンバー表(試合ごとの背番号の表示に使う)
+    var lineups: [MatchLineup] = []
     let initialHalf: Int
     let initialMinute: Int
     // (下がる選手, 入る選手, 前後半, 分)
@@ -214,7 +216,10 @@ struct SubstitutionAddSheet: View {
     private var teamPlayers: [Player] {
         players
             .filter { $0.teamID == selectedTeamID }
-            .sorted { $0.number < $1.number }
+            .sorted {
+                MatchNumbering.number(for: $0, matchID: match.id, lineups: lineups)
+                    < MatchNumbering.number(for: $1, matchID: match.id, lineups: lineups)
+            }
     }
 
     private var canSubmit: Bool {
@@ -233,9 +238,6 @@ struct SubstitutionAddSheet: View {
     }
 
     private func playerLabel(_ player: Player) -> String {
-        if let name = player.name, !name.isEmpty {
-            return "#\(player.number) \(name)"
-        }
-        return "#\(player.number)"
+        MatchNumbering.label(for: player, matchID: match.id, lineups: lineups)
     }
 }

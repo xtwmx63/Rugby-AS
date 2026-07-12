@@ -409,9 +409,9 @@ struct TeamEditorView: View {
                     Label("追加", systemImage: "plus")
                 }
             } header: {
-                Text("メンバー表")
+                Text("選手名簿")
             } footer: {
-                Text("名前は空欄のままでも記録できます。選手の完全削除はV1では扱いません。")
+                Text("名前は空欄のままでも記録できます。ここの番号は並び順用の基本番号で、試合ごとの背番号は各試合のメンバー登録で設定します。")
             }
         }
         .navigationTitle(team.name.isEmpty ? "チーム編集" : team.name)

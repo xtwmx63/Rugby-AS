@@ -125,6 +125,9 @@ final class MatchLineup {
     var role: String
     // 表示順（同一 matchID × teamID × role 内で 0 から昇順）
     var order: Int
+    // この試合で着ける背番号。nil なら選手の基本番号を使う。
+    // (ラグビーは固定背番号を持たず試合ごとに変わるため、試合単位で持つ)
+    var number: Int?
 
     init(
       id: UUID = UUID(),
@@ -132,7 +135,8 @@ final class MatchLineup {
         teamID: UUID,
         playerID: UUID,
         role: String,
-        order: Int
+        order: Int,
+        number: Int? = nil
     ) {
         self.id = id
         self.matchID = matchID
@@ -140,6 +144,7 @@ final class MatchLineup {
         self.playerID = playerID
         self.role = role
         self.order = order
+        self.number = number
     }
 }
 

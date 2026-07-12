@@ -38,6 +38,7 @@ enum MatchCSVExporter {
         events: [StatEvent],
         teams: [Team],
         players: [Player],
+        lineups: [MatchLineup] = [],
         tournamentName: String
     ) -> MatchCSVFile {
         let homeName = teamName(for: match.homeTeamID, in: teams)
@@ -48,6 +49,7 @@ enum MatchCSVExporter {
             events: events,
             teams: teams,
             players: players,
+            lineups: lineups,
             tournamentName: tournamentName
         )
 
@@ -64,7 +66,8 @@ enum MatchCSVExporter {
         matches: [Match],
         events: [StatEvent],
         teams: [Team],
-        players: [Player]
+        players: [Player],
+        lineups: [MatchLineup] = []
     ) -> MatchCSVFile {
         var lines = [headerLine]
 
@@ -76,6 +79,7 @@ enum MatchCSVExporter {
                 events: matchEvents,
                 teams: teams,
                 players: players,
+                lineups: lineups,
                 tournamentName: tournamentName
             )
         }
@@ -93,6 +97,7 @@ enum MatchCSVExporter {
         events: [StatEvent],
         teams: [Team],
         players: [Player],
+        lineups: [MatchLineup],
         tournamentName: String
     ) -> [String] {
         let homeName = teamName(for: match.homeTeamID, in: teams)
@@ -105,6 +110,10 @@ enum MatchCSVExporter {
 
         return rows.map { event in
             let player = players.first { $0.id == event.playerID }
+            // 背番号はその試合のメンバー表の番号(なければ基本番号)
+            let number = player.map {
+                MatchNumbering.number(for: $0, matchID: match.id, lineups: lineups)
+            }
             return [
                 tournamentName,
                 dateText,
@@ -115,7 +124,7 @@ enum MatchCSVExporter {
                 categoryLabel(event.category),
                 event.category,
                 teamLabel(for: event, homeName: homeName, awayName: awayName, teams: teams),
-                player.map { String($0.number) } ?? "",
+                number.map(String.init) ?? "",
                 player?.name ?? "",
                 outcomeLabel(event.outcome),
                 event.category == "possession" ? String(event.seconds) : ""
