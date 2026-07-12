@@ -7,6 +7,7 @@
 
 import SwiftData
 import SwiftUI
+import UIKit
 
 struct MatchSummaryView: View {
     @Environment(\.modelContext) private var modelContext
@@ -26,6 +27,8 @@ struct MatchSummaryView: View {
     @State private var selectedProgressionEventID: UUID?
     // 得点差グラフの視点。nil なら自動(最終勝者、同点はHOME)
     @State private var marginPerspectiveOverride: Bool?
+    // 「画像で共有」で生成したサマリー画像(セット中はプレビューシートを表示)
+    @State private var exportedSummaryImage: UIImage?
 
     private enum SummaryScope: String, CaseIterable, Identifiable {
         case all
@@ -230,6 +233,14 @@ struct MatchSummaryView: View {
             }
             .presentationDetents([.medium, .large])
         }
+        .sheet(isPresented: Binding(
+            get: { exportedSummaryImage != nil },
+            set: { if !$0 { exportedSummaryImage = nil } }
+        )) {
+            if let exportedSummaryImage {
+                SummaryImageShareSheet(image: exportedSummaryImage, title: summaryImageTitle)
+            }
+        }
     }
 
     // MARK: - Main layout
@@ -304,25 +315,87 @@ struct MatchSummaryView: View {
         .frame(height: 50)
     }
 
-    // 画面最下部に固定するCSV出力ボタン(得点タイムラインの枠の外)
+    // 画面最下部に固定する書き出しバー(CSVと画像。得点タイムラインの枠の外)
     private var csvExportBar: some View {
-        ShareLink(item: csvFile, preview: SharePreview(csvFile.fileName)) {
-            Label("CSV出力", systemImage: "square.and.arrow.down")
-                .font(.headline.weight(.bold))
-                .foregroundStyle(.white)
-                .frame(maxWidth: .infinity)
-                .frame(height: 54)
-                .background(Color.white.opacity(0.05))
-                .clipShape(RoundedRectangle(cornerRadius: 16))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 16)
-                        .stroke(Color.white.opacity(0.38), lineWidth: 1.5)
-                )
+        HStack(spacing: 10) {
+            ShareLink(item: csvFile, preview: SharePreview(csvFile.fileName)) {
+                exportBarLabel("CSV出力", systemImage: "square.and.arrow.down")
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("CSVで書き出し")
+
+            Button {
+                renderSummaryImage()
+            } label: {
+                exportBarLabel("画像で共有", systemImage: "photo")
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("サマリーを画像で共有")
         }
-        .buttonStyle(.plain)
-        .accessibilityLabel("CSVで書き出し")
         .padding(.horizontal, 16)
         .padding(.top, 8)
+    }
+
+    private func exportBarLabel(_ title: String, systemImage: String) -> some View {
+        Label(title, systemImage: systemImage)
+            .font(.headline.weight(.bold))
+            .foregroundStyle(.white)
+            .lineLimit(1)
+            .minimumScaleFactor(0.8)
+            .frame(maxWidth: .infinity)
+            .frame(height: 54)
+            .background(Color.white.opacity(0.05))
+            .clipShape(RoundedRectangle(cornerRadius: 16))
+            .overlay(
+                RoundedRectangle(cornerRadius: 16)
+                    .stroke(Color.white.opacity(0.38), lineWidth: 1.5)
+            )
+    }
+
+    // MARK: - サマリーの画像書き出し
+
+    private var summaryImageTitle: String {
+        "\(teamName(for: match.homeTeamID)) vs \(teamName(for: match.awayTeamID)) サマリー"
+    }
+
+    // 画像として書き出す中身(画面のカードをそのまま並べ、下にクレジットを足す)
+    private var summaryImageContent: some View {
+        VStack(spacing: 8) {
+            scoreHeaderCard
+            possessionCard
+            HStack(alignment: .top, spacing: 10) {
+                scoringBreakdownCard
+                    .frame(maxWidth: .infinity)
+                    .layoutPriority(1)
+                setPieceCard
+                    .frame(maxWidth: .infinity)
+            }
+            scoringProgressionCard
+            scoreMarginCard
+            scorerTimelineCard
+
+            HStack {
+                Text(tournaments.first { $0.id == match.tournamentID }?.officialName ?? "")
+                    .lineLimit(1)
+                Spacer()
+                Text("Rugby AS")
+            }
+            .font(.caption.weight(.bold))
+            .foregroundStyle(.white.opacity(0.5))
+            .padding(.horizontal, 4)
+        }
+        .padding(12)
+        .background(summaryBackground)
+        .environment(\.colorScheme, .dark)
+        .frame(width: 420)
+    }
+
+    // 画面の内容を1枚の画像にする(3倍解像度で鮮明に)
+    @MainActor
+    private func renderSummaryImage() {
+        let renderer = ImageRenderer(content: summaryImageContent)
+        renderer.scale = 3
+        exportedSummaryImage = renderer.uiImage
     }
 
     private var scoreHeaderCard: some View {
@@ -1464,6 +1537,41 @@ private extension View {
                     .stroke(Color.white.opacity(0.14), lineWidth: 1)
             )
             .clipShape(RoundedRectangle(cornerRadius: cornerRadius))
+    }
+}
+
+// 生成したサマリー画像のプレビューと共有
+private struct SummaryImageShareSheet: View {
+    let image: UIImage
+    let title: String
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                Image(uiImage: image)
+                    .resizable()
+                    .scaledToFit()
+                    .clipShape(RoundedRectangle(cornerRadius: 12))
+                    .padding(12)
+            }
+            .background(Color(.systemGroupedBackground))
+            .navigationTitle("画像で共有")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button("閉じる") {
+                        dismiss()
+                    }
+                }
+                ToolbarItem(placement: .topBarTrailing) {
+                    ShareLink(
+                        item: Image(uiImage: image),
+                        preview: SharePreview(title, image: Image(uiImage: image))
+                    )
+                }
+            }
+        }
     }
 }
 
