@@ -362,6 +362,16 @@ struct TeamEditorView: View {
             .sorted { $0.number < $1.number }
     }
 
+    // チーム内で重複している背番号(行にオレンジで警告表示)
+    private var duplicatedNumbers: Set<Int> {
+        var seen: Set<Int> = []
+        var duplicated: Set<Int> = []
+        for player in players where !seen.insert(player.number).inserted {
+            duplicated.insert(player.number)
+        }
+        return duplicated
+    }
+
     var body: some View {
         Form {
             Section("チーム") {
@@ -400,7 +410,10 @@ struct TeamEditorView: View {
 
             Section {
                 ForEach(players) { player in
-                    PlayerRow(player: player)
+                    PlayerRow(
+                        player: player,
+                        isNumberDuplicated: duplicatedNumbers.contains(player.number)
+                    )
                 }
 
                 Button {
@@ -411,7 +424,7 @@ struct TeamEditorView: View {
             } header: {
                 Text("選手名簿")
             } footer: {
-                Text("名前は空欄のままでも記録できます。ここの番号は並び順用の基本番号で、試合ごとの背番号は各試合のメンバー登録で設定します。")
+                Text("名前は空欄のままでも記録できます。背番号はタップで変更でき、大会前にここで設定しておけば、以後の試合のメンバー登録にそのまま引き継がれます。")
             }
         }
         .navigationTitle(team.name.isEmpty ? "チーム編集" : team.name)
@@ -533,9 +546,13 @@ struct TeamEditorView: View {
 
 private struct PlayerRow: View {
     @Bindable var player: Player
+    // チーム内で背番号が重複しているとき true(オレンジで警告表示)
+    var isNumberDuplicated: Bool = false
     @Environment(\.modelContext) private var modelContext
     @State private var photoPickerItem: PhotosPickerItem?
     @State private var isShowingPhotoDeleteConfirmation = false
+    @State private var isEditingNumber = false
+    @State private var numberText = ""
 
     var body: some View {
         HStack(spacing: 12) {
@@ -544,9 +561,17 @@ private struct PlayerRow: View {
             }
             .buttonStyle(.plain)
 
-            Text("#\(player.number)")
-                .font(.headline.monospacedDigit())
-                .frame(width: 36, alignment: .leading)
+            // 背番号はタップで変更(大会前にここで事前登録しておく)
+            Button {
+                numberText = "\(player.number)"
+                isEditingNumber = true
+            } label: {
+                Text("#\(player.number)")
+                    .font(.headline.monospacedDigit())
+                    .foregroundStyle(isNumberDuplicated ? Color.orange : Color.accentColor)
+            }
+            .buttonStyle(.plain)
+            .frame(width: 44, alignment: .leading)
 
             TextField("名前（任意）", text: playerName)
                 .textInputAutocapitalization(.words)
@@ -585,6 +610,19 @@ private struct PlayerRow: View {
                 deletePhoto()
             }
             Button("キャンセル", role: .cancel) { }
+        }
+        .alert("背番号を変更", isPresented: $isEditingNumber) {
+            TextField("番号", text: $numberText)
+                .keyboardType(.numberPad)
+            Button("保存") {
+                if let number = Int(numberText), number > 0 {
+                    player.number = number
+                    try? modelContext.save()
+                }
+            }
+            Button("キャンセル", role: .cancel) { }
+        } message: {
+            Text("この選手の背番号を入力してください。以後の試合のメンバー登録に自動で使われます。")
         }
     }
 

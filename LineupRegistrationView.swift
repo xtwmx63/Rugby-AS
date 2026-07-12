@@ -91,7 +91,7 @@ struct LineupRegistrationView: View {
                 sectionView(title: "スタメン", entries: starters, role: "starter")
                 sectionView(title: "リザーブ", entries: reserves, role: "reserve")
 
-                Text("背番号はタップで変更できます。この試合だけの番号で、チーム名簿の基本番号は変わりません。")
+                Text("背番号はチームページで事前登録したものが自動で使われます。この試合だけ変えたいときは番号をタップしてください。")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -418,15 +418,15 @@ struct LineupRegistrationView: View {
     private func addPlayer(_ player: Player, role: String) {
         let existing = teamLineupEntries.filter { $0.role == role }
         let nextOrder = (existing.map { $0.order }.max() ?? -1) + 1
-        // ラグビーの慣習どおり、スタメンは1〜15、リザーブは16〜を初期値として振る
-        let defaultNumber = role == "starter" ? nextOrder + 1 : 16 + nextOrder
+        // 番号は持たせない(nil) = チームページで事前登録した背番号に追従する。
+        // この試合だけ変えたいときに番号チップから設定すると、そこで初めて上書きされる。
         let entry = MatchLineup(
             matchID: match.id,
             teamID: currentTeamID,
             playerID: player.id,
             role: role,
             order: nextOrder,
-            number: defaultNumber
+            number: nil
         )
         modelContext.insert(entry)
         try? modelContext.save()
