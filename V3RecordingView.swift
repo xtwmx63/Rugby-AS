@@ -174,6 +174,9 @@ struct V3RecordingView: View {
         }
         .onDisappear {
             UIApplication.shared.isIdleTimerDisabled = false
+            // この試合に登場した選手の背番号を今の値で控えておく
+            // (後からチームページで番号を変えても、この試合の表示が変わらないように)
+            MatchNumbering.freezeNumbers(forMatch: match.id, context: modelContext)
         }
         .sheet(item: $scoringEventForPlayerSelection) { event in
             PlayerSelectionSheet(
@@ -207,6 +210,7 @@ struct V3RecordingView: View {
                     )
                     modelContext.insert(substitution)
                     try? modelContext.save()
+                    MatchNumbering.freezeNumbers(forMatch: match.id, context: modelContext)
                 }
             )
             .presentationDetents([.large])

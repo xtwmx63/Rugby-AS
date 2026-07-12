@@ -50,7 +50,10 @@ struct LineupRegistrationView: View {
     }
 
     private var teamLineupEntries: [MatchLineup] {
-        lineupEntries.filter { $0.teamID == currentTeamID }
+        // 「番号の控え」行(記録から自動生成)はメンバー表としては扱わない
+        lineupEntries.filter {
+            $0.teamID == currentTeamID && ($0.role == "starter" || $0.role == "reserve")
+        }
     }
 
     private var starters: [MatchLineup] {
@@ -418,6 +421,18 @@ struct LineupRegistrationView: View {
     private func addPlayer(_ player: Player, role: String) {
         let existing = teamLineupEntries.filter { $0.role == role }
         let nextOrder = (existing.map { $0.order }.max() ?? -1) + 1
+
+        // 記録から自動生成された「番号の控え」行が既にあれば、それを昇格させる
+        // (同じ選手の行が二重にできるのを防ぐ。控えの番号はそのまま引き継ぐ)
+        if let snapshot = lineupEntries.first(where: {
+            $0.playerID == player.id && $0.role == MatchNumbering.numberSnapshotRole
+        }) {
+            snapshot.role = role
+            snapshot.order = nextOrder
+            try? modelContext.save()
+            return
+        }
+
         // チームページで事前登録した「今の背番号」を書き込んで固定する。
         // 後からチームページで番号を変えても、登録済みの試合は変わらない
         // (過去の試合の背番号が遡って書き換わる事故を防ぐ)。
@@ -441,7 +456,10 @@ struct LineupRegistrationView: View {
         let teamID = currentTeamID
         let matchIDsWithLineup = Set(
             everyLineupEntry
-                .filter { $0.teamID == teamID && $0.matchID != match.id }
+                .filter {
+                    $0.teamID == teamID && $0.matchID != match.id
+                        && ($0.role == "starter" || $0.role == "reserve")
+                }
                 .map(\.matchID)
         )
         let candidates = allMatches.filter {
@@ -457,6 +475,7 @@ struct LineupRegistrationView: View {
         let teamID = currentTeamID
         let sourceEntries = everyLineupEntry.filter {
             $0.matchID == source.id && $0.teamID == teamID
+                && ($0.role == "starter" || $0.role == "reserve")
         }
         for sourceEntry in sourceEntries {
             // 番号は前の試合の値ではなく「今のチームページの番号」を使う

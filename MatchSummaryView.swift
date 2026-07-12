@@ -241,6 +241,8 @@ struct MatchSummaryView: View {
             ) { player in
                 event.playerID = player?.id
                 try? modelContext.save()
+                // 紐づけた選手の背番号を今の値で控える(過去の遡り変更を防ぐ)
+                MatchNumbering.freezeNumbers(forMatch: match.id, context: modelContext)
                 scoringEventForPlayerSelection = nil
             }
             .presentationDetents([.medium, .large])
@@ -1310,6 +1312,7 @@ struct MatchSummaryView: View {
                     )
                     modelContext.insert(substitution)
                     try? modelContext.save()
+                    MatchNumbering.freezeNumbers(forMatch: match.id, context: modelContext)
                 }
             )
             .presentationDetents([.large])
