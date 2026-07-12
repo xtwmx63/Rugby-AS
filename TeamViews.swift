@@ -355,6 +355,8 @@ struct TeamEditorView: View {
     @Query(sort: \Player.number) private var allPlayers: [Player]
     @State private var logoPickerItem: PhotosPickerItem?
     @State private var isShowingLogoDeleteConfirmation = false
+    @State private var playerPendingDeletion: Player?
+    @State private var deletionBlockedPlayer: Player?
 
     private var players: [Player] {
         allPlayers
@@ -412,7 +414,10 @@ struct TeamEditorView: View {
                 ForEach(players) { player in
                     PlayerRow(
                         player: player,
-                        isNumberDuplicated: duplicatedNumbers.contains(player.number)
+                        isNumberDuplicated: duplicatedNumbers.contains(player.number),
+                        onDelete: {
+                            requestPlayerDeletion(player)
+                        }
                     )
                 }
 
@@ -445,6 +450,86 @@ struct TeamEditorView: View {
             }
             Button("キャンセル", role: .cancel) { }
         }
+        .confirmationDialog(
+            "この選手を削除しますか？",
+            isPresented: Binding(
+                get: { playerPendingDeletion != nil },
+                set: { if !$0 { playerPendingDeletion = nil } }
+            ),
+            presenting: playerPendingDeletion,
+            actions: { player in
+                Button("削除する", role: .destructive) {
+                    deletePlayer(player)
+                    playerPendingDeletion = nil
+                }
+                Button("キャンセル", role: .cancel) {
+                    playerPendingDeletion = nil
+                }
+            },
+            message: { player in
+                Text("「#\(player.number) \(player.name ?? "名前未設定")」を名簿から削除します。写真も消えます。")
+            }
+        )
+        .alert(
+            "削除できません",
+            isPresented: Binding(
+                get: { deletionBlockedPlayer != nil },
+                set: { if !$0 { deletionBlockedPlayer = nil } }
+            ),
+            presenting: deletionBlockedPlayer,
+            actions: { _ in
+                Button("OK", role: .cancel) {
+                    deletionBlockedPlayer = nil
+                }
+            },
+            message: { player in
+                Text("「#\(player.number) \(player.name ?? "名前未設定")」は試合の記録(得点・メンバー表・交代)で使われているため削除できません。")
+            }
+        )
+    }
+
+    // MARK: - 選手の削除
+
+    private func requestPlayerDeletion(_ player: Player) {
+        if isPlayerUsedInRecords(player) {
+            deletionBlockedPlayer = player
+        } else {
+            playerPendingDeletion = player
+        }
+    }
+
+    // 得点・メンバー表・交代のどれかで使われている選手は削除させない
+    // (記録が「選手不明」の迷子データになるのを防ぐ)
+    private func isPlayerUsedInRecords(_ player: Player) -> Bool {
+        let playerID = player.id
+
+        var eventDescriptor = FetchDescriptor<StatEvent>(
+            predicate: #Predicate { $0.playerID == playerID }
+        )
+        eventDescriptor.fetchLimit = 1
+        if (try? modelContext.fetch(eventDescriptor).first) != nil { return true }
+
+        var lineupDescriptor = FetchDescriptor<MatchLineup>(
+            predicate: #Predicate { $0.playerID == playerID }
+        )
+        lineupDescriptor.fetchLimit = 1
+        if (try? modelContext.fetch(lineupDescriptor).first) != nil { return true }
+
+        var substitutionDescriptor = FetchDescriptor<Substitution>(
+            predicate: #Predicate { $0.playerInID == playerID || $0.playerOutID == playerID }
+        )
+        substitutionDescriptor.fetchLimit = 1
+        if (try? modelContext.fetch(substitutionDescriptor).first) != nil { return true }
+
+        return false
+    }
+
+    private func deletePlayer(_ player: Player) {
+        if let photoName = player.imagePath {
+            ImageStorage.delete(named: photoName)
+        }
+        modelContext.delete(player)
+        try? modelContext.save()
     }
 
     @ViewBuilder
@@ -548,6 +633,8 @@ private struct PlayerRow: View {
     @Bindable var player: Player
     // チーム内で背番号が重複しているとき true(オレンジで警告表示)
     var isNumberDuplicated: Bool = false
+    // スワイプ削除のリクエスト(使用中チェックは呼び出し側が行う)
+    var onDelete: (() -> Void)? = nil
     @Environment(\.modelContext) private var modelContext
     @State private var photoPickerItem: PhotosPickerItem?
     @State private var isShowingPhotoDeleteConfirmation = false
@@ -622,7 +709,14 @@ private struct PlayerRow: View {
             }
             Button("キャンセル", role: .cancel) { }
         } message: {
-            Text("この選手の背番号を入力してください。以後の試合のメンバー登録に自動で使われます。")
+            Text("この選手の背番号を入力してください。以後の試合のメンバー登録に自動で使われます(登録済みの試合は変わりません)。")
+        }
+        .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+            if let onDelete {
+                Button("削除", role: .destructive) {
+                    onDelete()
+                }
+            }
         }
     }
 

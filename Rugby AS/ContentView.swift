@@ -110,6 +110,11 @@ struct ContentView: View {
             }
             .navigationBarBackButtonHidden(true)
             .toolbar(.hidden, for: .navigationBar)
+            .task {
+                // 背番号が「チームページ追従」のままの古いメンバー表を、
+                // 現在の番号で固定する(過去試合の遡り書き換えを防ぐ)
+                MatchNumbering.freezeLineupNumbers(context: modelContext)
+            }
             .navigationDestination(item: $selectedMatch) { match in
                 matchDestination(for: match)
             }

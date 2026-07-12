@@ -418,15 +418,16 @@ struct LineupRegistrationView: View {
     private func addPlayer(_ player: Player, role: String) {
         let existing = teamLineupEntries.filter { $0.role == role }
         let nextOrder = (existing.map { $0.order }.max() ?? -1) + 1
-        // 番号は持たせない(nil) = チームページで事前登録した背番号に追従する。
-        // この試合だけ変えたいときに番号チップから設定すると、そこで初めて上書きされる。
+        // チームページで事前登録した「今の背番号」を書き込んで固定する。
+        // 後からチームページで番号を変えても、登録済みの試合は変わらない
+        // (過去の試合の背番号が遡って書き換わる事故を防ぐ)。
         let entry = MatchLineup(
             matchID: match.id,
             teamID: currentTeamID,
             playerID: player.id,
             role: role,
             order: nextOrder,
-            number: nil
+            number: player.number
         )
         modelContext.insert(entry)
         try? modelContext.save()
@@ -458,13 +459,15 @@ struct LineupRegistrationView: View {
             $0.matchID == source.id && $0.teamID == teamID
         }
         for sourceEntry in sourceEntries {
+            // 番号は前の試合の値ではなく「今のチームページの番号」を使う
+            // (大会前に事前変更した番号が、次の試合へ正しく引き継がれるように)
             let entry = MatchLineup(
                 matchID: match.id,
                 teamID: teamID,
                 playerID: sourceEntry.playerID,
                 role: sourceEntry.role,
                 order: sourceEntry.order,
-                number: sourceEntry.number
+                number: player(for: sourceEntry)?.number ?? sourceEntry.number
             )
             modelContext.insert(entry)
         }
