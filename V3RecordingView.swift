@@ -7,6 +7,7 @@
 
 import SwiftData
 import SwiftUI
+import UIKit
 
 struct V3RecordingView: View {
     @Environment(\.modelContext) private var modelContext
@@ -163,6 +164,12 @@ struct V3RecordingView: View {
             if selectedInputTeamID == nil {
                 selectedInputTeamID = match.homeTeamID
             }
+            // 記録中に画面が自動ロックすると計測が見えなくなるため、
+            // この画面を開いている間だけスリープを止める
+            UIApplication.shared.isIdleTimerDisabled = true
+        }
+        .onDisappear {
+            UIApplication.shared.isIdleTimerDisabled = false
         }
         .sheet(item: $scoringEventForPlayerSelection) { event in
             PlayerSelectionSheet(players: players(for: event), title: playerSelectionTitle(for: event)) { player in
