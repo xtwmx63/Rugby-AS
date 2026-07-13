@@ -377,6 +377,15 @@ struct TeamEditorView: View {
         return duplicated
     }
 
+    // 名簿の背番号・データアイコンに使う色。チームカラーを暗い背景でも
+    // 読めるよう明度を持ち上げる。未設定のときは従来どおり青。
+    private var rosterAccent: Color {
+        guard let hex = team.colorHex, let color = Color(hex: hex) else {
+            return .accentColor
+        }
+        return color.hsbBrightness < 0.7 ? color.withBrightness(0.8) : color
+    }
+
     // 削除ダイアログ用の表示名
     private func playerLabel(_ player: Player) -> String {
         let name = (player.name?.isEmpty == false) ? player.name! : "名前未設定"
@@ -427,6 +436,7 @@ struct TeamEditorView: View {
                     PlayerRow(
                         player: player,
                         isNumberDuplicated: player.number.map { duplicatedNumbers.contains($0) } ?? false,
+                        accent: rosterAccent,
                         onDelete: {
                             requestPlayerDeletion(player)
                         }
@@ -646,6 +656,8 @@ private struct PlayerRow: View {
     @Bindable var player: Player
     // チーム内で背番号が重複しているとき true(オレンジで警告表示)
     var isNumberDuplicated: Bool = false
+    // 背番号・データアイコンの色(チームカラー。暗い時のフォールバックは呼び出し側で補正)
+    var accent: Color = .accentColor
     // スワイプ削除のリクエスト(使用中チェックは呼び出し側が行う)
     var onDelete: (() -> Void)? = nil
     @Environment(\.modelContext) private var modelContext
@@ -670,7 +682,7 @@ private struct PlayerRow: View {
                     .font(.headline.monospacedDigit())
                     .foregroundStyle(
                         isNumberDuplicated ? Color.orange
-                            : (player.number == nil ? Color.secondary : Color.accentColor)
+                            : (player.number == nil ? Color.secondary : accent)
                     )
             }
             .buttonStyle(.plain)
@@ -695,7 +707,7 @@ private struct PlayerRow: View {
             } label: {
                 Image(systemName: "chart.bar.fill")
                     .font(.subheadline)
-                    .foregroundStyle(Color.accentColor)
+                    .foregroundStyle(accent)
             }
             .buttonStyle(.plain)
             .frame(width: 30)
