@@ -12,7 +12,6 @@
 //  何度読み込んでも壊れない(機種変更・二重読み込みに安全)。
 //
 
-import CoreTransferable
 import Foundation
 import SwiftData
 import UniformTypeIdentifiers
@@ -216,6 +215,23 @@ enum BackupManager {
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
         return try encoder.encode(backup)
+    }
+
+    // バックアップJSONを一時ファイルに書き出して、その場所(URL)を返す。
+    // 共有シートには「もう出来上がったファイル」を渡す形にする。
+    // (Transferable の中で遅延生成すると、共有シート側の実行タイミングで
+    //  不安定になり落ちることがあるため、タップ時に手前で作ってしまう)
+    static func writeBackupFile(context: ModelContext) throws -> URL {
+        let data = try makeBackupData(context: context)
+
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "yyyyMMdd"
+        let fileName = "RugbyAS_backup_\(formatter.string(from: Date())).json"
+
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent(fileName)
+        try data.write(to: url)
+        return url
     }
 
     // JSONを読み込んで合体させる(同じIDは上書き・無いものは追加・削除しない)
@@ -443,25 +459,3 @@ enum BackupManager {
     }
 }
 
-// MARK: - 共有シートに渡す「バックアップファイルのもと」
-// 共有される瞬間に全データを集めてファイル化する(タップまでは何もしない)
-
-struct BackupExportRequest: Transferable {
-    let container: ModelContainer
-
-    static var transferRepresentation: some TransferRepresentation {
-        FileRepresentation(exportedContentType: .json) { request in
-            let context = ModelContext(request.container)
-            let data = try BackupManager.makeBackupData(context: context)
-
-            let formatter = DateFormatter()
-            formatter.locale = Locale(identifier: "en_US_POSIX")
-            formatter.dateFormat = "yyyyMMdd"
-            let fileName = "RugbyAS_backup_\(formatter.string(from: Date())).json"
-
-            let url = FileManager.default.temporaryDirectory.appendingPathComponent(fileName)
-            try data.write(to: url)
-            return SentTransferredFile(url)
-        }
-    }
-}
