@@ -775,6 +775,11 @@ private struct PlayerCollectionCard: View {
         return trimmed.isEmpty ? "名前未設定" : trimmed
     }
 
+    private var romanName: String? {
+        let trimmed = (player.nameRoman ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed.uppercased()
+    }
+
     var body: some View {
         GeometryReader { proxy in
             let cardShape = CollectionCardShape(cut: max(8, proxy.size.width * 0.075))
@@ -928,11 +933,12 @@ private struct PlayerCollectionCard: View {
                 .lineLimit(1)
                 .minimumScaleFactor(0.62)
 
-            Text(player.imagePath == nil ? "PHOTO REQUIRED" : "RUGBY AS")
+            Text(romanName ?? "RUGBY AS")
                 .font(.system(size: 7.5, weight: .bold, design: .rounded))
                 .tracking(0.9)
                 .foregroundStyle(accent.withBrightness(min(1.0, accent.hsbBrightness + 0.22)))
                 .lineLimit(1)
+                .minimumScaleFactor(0.7)
         }
         .padding(.horizontal, 9)
         .padding(.vertical, 7)
@@ -1171,6 +1177,31 @@ private struct TeamColorPickerSheet: View {
 
 // MARK: - Player editor
 
+// MARK: - かな→英語表記の自動変換
+
+enum PlayerNameRomanizer {
+    /// 読み(かな)から英語表記を作る。「ますだ ゆい」→「YUI MASUDA」。
+    /// 日本語の姓名順を英語の「名 姓」順にひっくり返す。1語ならそのまま。
+    /// 外国人選手など順序や綴りが違う場合は、生成後に手で直せる前提の下書き。
+    static func roman(fromKana kana: String) -> String {
+        // 「・」や全角スペースも区切りとして扱う
+        let normalized = kana
+            .replacingOccurrences(of: "・", with: " ")
+            .replacingOccurrences(of: "　", with: " ")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalized.isEmpty else { return "" }
+
+        // かな→ローマ字。「ゆう」→「yū」のような長音記号は普通の英字に畳む
+        let latin = normalized.applyingTransform(.toLatin, reverse: false) ?? normalized
+        let folded = latin.folding(options: .diacriticInsensitive, locale: Locale(identifier: "en_US"))
+
+        let words = folded
+            .split(whereSeparator: { $0.isWhitespace })
+            .map { $0.uppercased() }
+        return words.reversed().joined(separator: " ")
+    }
+}
+
 private struct PlayerCardEditorSheet: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.modelContext) private var modelContext
@@ -1182,6 +1213,8 @@ private struct PlayerCardEditorSheet: View {
     let onRequestDelete: () -> Void
 
     @State private var nameText: String
+    @State private var kanaText: String
+    @State private var romanText: String
     @State private var numberText: String
     @State private var photoPickerItem: PhotosPickerItem?
     @State private var isShowingPhotoDeleteConfirmation = false
@@ -1201,6 +1234,8 @@ private struct PlayerCardEditorSheet: View {
         self.isNumberDuplicated = isNumberDuplicated
         self.onRequestDelete = onRequestDelete
         self._nameText = State(initialValue: player.name ?? "")
+        self._kanaText = State(initialValue: player.nameKana ?? "")
+        self._romanText = State(initialValue: player.nameRoman ?? "")
         self._numberText = State(initialValue: player.number.map(String.init) ?? "")
     }
 
@@ -1247,6 +1282,14 @@ private struct PlayerCardEditorSheet: View {
             .onChange(of: photoPickerItem) { _, newItem in
                 handleSelectedPhoto(newItem)
             }
+            .onChange(of: kanaText) { oldKana, newKana in
+                // 英語表記を手で直した後は上書きしない。
+                // 空、または「直す前の読みから自動生成した値のまま」のときだけ追従させる。
+                let autoFromOld = PlayerNameRomanizer.roman(fromKana: oldKana)
+                if romanText.isEmpty || romanText == autoFromOld {
+                    romanText = PlayerNameRomanizer.roman(fromKana: newKana)
+                }
+            }
             .confirmationDialog(
                 "写真を削除しますか？",
                 isPresented: $isShowingPhotoDeleteConfirmation,
@@ -1284,6 +1327,30 @@ private struct PlayerCardEditorSheet: View {
                     .multilineTextAlignment(.trailing)
                     .foregroundStyle(.white)
             }
+
+            Divider().overlay(Color.white.opacity(0.10))
+
+            fieldRow(title: "読み") {
+                TextField("やまだ たろう", text: $kanaText)
+                    .multilineTextAlignment(.trailing)
+                    .foregroundStyle(.white)
+            }
+
+            Divider().overlay(Color.white.opacity(0.10))
+
+            fieldRow(title: "英語表記") {
+                TextField("読みから自動で入力", text: $romanText)
+                    .textInputAutocapitalization(.characters)
+                    .autocorrectionDisabled()
+                    .multilineTextAlignment(.trailing)
+                    .foregroundStyle(.white)
+            }
+
+            Text("読み(かな)を入力すると英語表記が自動で入ります。カードの名前の下に表示されるので、綴りが違うときは英語表記を直接直してください。")
+                .font(.caption)
+                .foregroundStyle(.white.opacity(0.45))
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.top, 10)
 
             if isNumberDuplicated {
                 Text("同じ背番号の選手が登録されています。")
@@ -1408,6 +1475,12 @@ private struct PlayerCardEditorSheet: View {
     private func saveAndDismiss() {
         let trimmedName = nameText.trimmingCharacters(in: .whitespacesAndNewlines)
         player.name = trimmedName.isEmpty ? nil : trimmedName
+
+        let trimmedKana = kanaText.trimmingCharacters(in: .whitespacesAndNewlines)
+        player.nameKana = trimmedKana.isEmpty ? nil : trimmedKana
+
+        let trimmedRoman = romanText.trimmingCharacters(in: .whitespacesAndNewlines)
+        player.nameRoman = trimmedRoman.isEmpty ? nil : trimmedRoman
 
         let trimmedNumber = numberText.trimmingCharacters(in: .whitespacesAndNewlines)
         if trimmedNumber.isEmpty {

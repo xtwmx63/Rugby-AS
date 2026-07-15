@@ -47,6 +47,9 @@ struct BackupPlayer: Codable {
     // nil = 背番号なし(古いバックアップは必ず数値が入っている)
     var number: Int?
     var name: String?
+    // 読み(かな)と英語表記。古いバックアップには無い項目なので nil 許容。
+    var nameKana: String?
+    var nameRoman: String?
     var imageBase64: String?
 }
 
@@ -159,6 +162,8 @@ enum BackupManager {
                     teamID: player.teamID,
                     number: player.number,
                     name: player.name,
+                    nameKana: player.nameKana,
+                    nameRoman: player.nameRoman,
                     imageBase64: imageBase64(named: player.imagePath)
                 )
             },
@@ -257,12 +262,22 @@ enum BackupManager {
                 existing.teamID = item.teamID
                 existing.number = item.number
                 existing.name = item.name
+                existing.nameKana = item.nameKana
+                existing.nameRoman = item.nameRoman
                 if let imagePath {
                     if let oldPath = existing.imagePath { ImageStorage.delete(named: oldPath) }
                     existing.imagePath = imagePath
                 }
             } else {
-                context.insert(Player(id: item.id, teamID: item.teamID, number: item.number, name: item.name, imagePath: imagePath))
+                context.insert(Player(
+                    id: item.id,
+                    teamID: item.teamID,
+                    number: item.number,
+                    name: item.name,
+                    nameKana: item.nameKana,
+                    nameRoman: item.nameRoman,
+                    imagePath: imagePath
+                ))
             }
             summary.players += 1
         }

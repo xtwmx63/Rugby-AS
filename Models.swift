@@ -34,14 +34,28 @@ final class Player {
     // 試合ごとの実際の番号はメンバー表(MatchLineup.number)に控えられる。
     var number: Int?
     var name: String?
+    // 名前の読み(かな)。入力すると英語表記の自動生成に使う。
+    var nameKana: String?
+    // カードに載せる英語表記。読みから自動生成されるが、手動で上書きも可能。
+    var nameRoman: String?
     // 顔写真のファイル名（ドキュメントディレクトリ配下）。nil で未設定。
     var imagePath: String?
 
-    init(id: UUID = UUID(), teamID: UUID, number: Int?, name: String? = nil, imagePath: String? = nil) {
+    init(
+        id: UUID = UUID(),
+        teamID: UUID,
+        number: Int?,
+        name: String? = nil,
+        nameKana: String? = nil,
+        nameRoman: String? = nil,
+        imagePath: String? = nil
+    ) {
         self.id = id
         self.teamID = teamID
         self.number = number
         self.name = name
+        self.nameKana = nameKana
+        self.nameRoman = nameRoman
         self.imagePath = imagePath
     }
 }
