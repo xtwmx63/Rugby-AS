@@ -5,9 +5,11 @@
 //  Created by Codex on 2026/05/17.
 //
 
+import CoreImage
 import PhotosUI
 import SwiftData
 import SwiftUI
+import Vision
 
 // MARK: - Color hex helpers
 
@@ -87,8 +89,6 @@ extension Color {
 
 // MARK: - Team color palette
 
-/// チームカラーの選択肢。極端に濃い/薄い色や、対戦時に区別しづらい色を避けた
-/// 視認性の高い 29 色のパレット。
 struct TeamColorOption: Identifiable, Hashable {
     let hex: String
     let name: String
@@ -97,65 +97,38 @@ struct TeamColorOption: Identifiable, Hashable {
 }
 
 enum TeamColorPalette {
-    // スペクトラム順（赤 → 橙 → 黄 → 緑 → 青緑 → 青 → 紫 → 桃 → 茶 → 中性）に並べる。
-    // 視認性確保のため、彩度・明度はどれも中〜やや濃いめのトーンに揃えている。
-    // 29 色（未設定と合わせて 5×6 グリッド）。
     static let options: [TeamColorOption] = [
-        // 赤系
         .init(hex: "#B71C1C", name: "クリムゾン"),
         .init(hex: "#E53935", name: "レッド"),
         .init(hex: "#FF7043", name: "コーラル"),
         .init(hex: "#FF8A65", name: "サーモン"),
-
-        // 橙系
         .init(hex: "#EF6C00", name: "パンプキン"),
         .init(hex: "#FB8C00", name: "オレンジ"),
         .init(hex: "#FFB300", name: "アンバー"),
-
-        // 黄系
         .init(hex: "#FDD835", name: "イエロー"),
         .init(hex: "#827717", name: "オリーブ"),
-
-        // 緑系
         .init(hex: "#C0CA33", name: "ライム"),
         .init(hex: "#43A047", name: "グリーン"),
         .init(hex: "#1B5E20", name: "フォレスト"),
         .init(hex: "#4DB6AC", name: "ミント"),
-
-        // 青緑系
         .init(hex: "#00897B", name: "ティール"),
         .init(hex: "#00ACC1", name: "シアン"),
         .init(hex: "#26C6DA", name: "アクア"),
-
-        // 青系
         .init(hex: "#29B6F6", name: "スカイ"),
         .init(hex: "#1E88E5", name: "ブルー"),
         .init(hex: "#3949AB", name: "ネイビー"),
         .init(hex: "#5C6BC0", name: "インディゴ"),
-
-        // 紫系
         .init(hex: "#9575CD", name: "ラベンダー"),
         .init(hex: "#8E24AA", name: "パープル"),
         .init(hex: "#6A1B9A", name: "プラム"),
-
-        // 桃系
         .init(hex: "#BA1FAB", name: "マゼンタ"),
         .init(hex: "#D81B60", name: "ピンク"),
         .init(hex: "#EC407A", name: "ローズピンク"),
-
-        // 茶系
         .init(hex: "#6D4C41", name: "ブラウン"),
         .init(hex: "#A1887F", name: "キャメル"),
-
-        // 中性
         .init(hex: "#546E7A", name: "スレート")
     ]
 
-    /// AWAY 用の色を返す。
-    /// - RGB 距離が `minDistance` 以上、かつ色相距離が `minHueDistance` 以上であれば
-    ///   ユーザの選んだ色 (preferred) をそのまま採用。
-    /// - どちらかが満たせない場合、パレットから両条件を満たす中で preferred に
-    ///   一番近い色へ差し替える。
     static func nearestDistinct(
         from preferred: Color,
         against home: Color,
@@ -164,9 +137,7 @@ enum TeamColorPalette {
     ) -> Color {
         let rgbOK = home.rgbDistance(to: preferred) >= minDistance
         let hueOK = home.hueDistance(to: preferred) >= minHueDistance
-        if rgbOK && hueOK {
-            return preferred
-        }
+        if rgbOK && hueOK { return preferred }
 
         var bestColor: Color?
         var bestSimilarity = Double.infinity
@@ -180,21 +151,15 @@ enum TeamColorPalette {
                 bestColor = candidate
             }
         }
+        if let bestColor { return bestColor }
 
-        if let best = bestColor { return best }
-
-        var fallback = preferred
-        var fallbackDistance: Double = 0
-        for option in options {
-            let distance = home.rgbDistance(to: option.color)
-            if distance > fallbackDistance {
-                fallbackDistance = distance
-                fallback = option.color
-            }
-        }
-        return fallback
+        return options.max {
+            home.rgbDistance(to: $0.color) < home.rgbDistance(to: $1.color)
+        }?.color ?? preferred
     }
 }
+
+// MARK: - Team list
 
 struct TeamListView: View {
     @Environment(\.modelContext) private var modelContext
@@ -218,7 +183,13 @@ struct TeamListView: View {
                     } label: {
                         HStack(spacing: 12) {
                             teamListThumbnail(for: team)
-                            Text(team.name)
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text(team.name)
+                                    .font(.headline)
+                                Text("選手名簿とチームデザイン")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
                         }
                     }
                     .swipeActions(edge: .trailing, allowsFullSwipe: false) {
@@ -246,36 +217,32 @@ struct TeamListView: View {
                 get: { teamPendingDeletion != nil },
                 set: { if !$0 { teamPendingDeletion = nil } }
             ),
-            presenting: teamPendingDeletion,
-            actions: { team in
-                Button("削除する", role: .destructive) {
-                    deleteTeam(team)
-                    teamPendingDeletion = nil
-                }
-                Button("キャンセル", role: .cancel) {
-                    teamPendingDeletion = nil
-                }
-            },
-            message: { team in
-                Text("チーム「\(team.name)」と、所属する選手・写真をまとめて削除します。")
+            presenting: teamPendingDeletion
+        ) { team in
+            Button("削除する", role: .destructive) {
+                deleteTeam(team)
+                teamPendingDeletion = nil
             }
-        )
+            Button("キャンセル", role: .cancel) {
+                teamPendingDeletion = nil
+            }
+        } message: { team in
+            Text("チーム「\(team.name)」と、所属する選手・写真をまとめて削除します。")
+        }
         .alert(
             "削除できません",
             isPresented: Binding(
                 get: { deletionBlockedTeam != nil },
                 set: { if !$0 { deletionBlockedTeam = nil } }
             ),
-            presenting: deletionBlockedTeam,
-            actions: { _ in
-                Button("OK", role: .cancel) {
-                    deletionBlockedTeam = nil
-                }
-            },
-            message: { team in
-                Text("「\(team.name)」は試合で使われているため削除できません。先に該当する試合を削除してください。")
+            presenting: deletionBlockedTeam
+        ) { _ in
+            Button("OK", role: .cancel) {
+                deletionBlockedTeam = nil
             }
-        )
+        } message: { team in
+            Text("「\(team.name)」は試合で使われているため削除できません。先に該当する試合を削除してください。")
+        }
     }
 
     private func requestDeletion(of team: Team) {
@@ -288,25 +255,25 @@ struct TeamListView: View {
 
     private func isTeamUsedInAnyMatch(_ team: Team) -> Bool {
         let teamID = team.id
-        let descriptor = FetchDescriptor<Match>(
+        var descriptor = FetchDescriptor<Match>(
             predicate: #Predicate { match in
                 match.homeTeamID == teamID || match.awayTeamID == teamID
             }
         )
+        descriptor.fetchLimit = 1
         return ((try? modelContext.fetch(descriptor).first) != nil)
     }
 
     private func deleteTeam(_ team: Team) {
-        // ロゴ画像を消す（端末内ファイル）
         if let logoName = team.logoPath {
             ImageStorage.delete(named: logoName)
         }
-        // 所属選手と各選手の写真を消す
+
         let teamID = team.id
-        let playerDescriptor = FetchDescriptor<Player>(
+        let descriptor = FetchDescriptor<Player>(
             predicate: #Predicate { player in player.teamID == teamID }
         )
-        if let players = try? modelContext.fetch(playerDescriptor) {
+        if let players = try? modelContext.fetch(descriptor) {
             for player in players {
                 if let photoName = player.imagePath {
                     ImageStorage.delete(named: photoName)
@@ -314,6 +281,7 @@ struct TeamListView: View {
                 modelContext.delete(player)
             }
         }
+
         modelContext.delete(team)
         try? modelContext.save()
     }
@@ -321,14 +289,10 @@ struct TeamListView: View {
     private func addTeam() {
         let team = Team(name: "新しいチーム")
         modelContext.insert(team)
-        addInitialPlayers(for: team)
-    }
-
-    private func addInitialPlayers(for team: Team) {
         for number in 1...15 {
-            let player = Player(teamID: team.id, number: number)
-            modelContext.insert(player)
+            modelContext.insert(Player(teamID: team.id, number: number))
         }
+        try? modelContext.save()
     }
 
     @ViewBuilder
@@ -337,139 +301,128 @@ struct TeamListView: View {
             Image(uiImage: uiImage)
                 .resizable()
                 .scaledToFill()
-                .frame(width: 36, height: 36)
-                .clipShape(RoundedRectangle(cornerRadius: 6))
+                .frame(width: 44, height: 44)
+                .clipShape(RoundedRectangle(cornerRadius: 10))
         } else {
             Image(systemName: "shield.fill")
                 .resizable()
                 .scaledToFit()
-                .frame(width: 36, height: 36)
-                .foregroundStyle(.secondary)
+                .padding(8)
+                .frame(width: 44, height: 44)
+                .foregroundStyle(teamAccent(for: team))
+                .background(Color.white.opacity(0.06))
+                .clipShape(RoundedRectangle(cornerRadius: 10))
         }
     }
+
+    private func teamAccent(for team: Team) -> Color {
+        guard let hex = team.colorHex, let color = Color(hex: hex) else { return .blue }
+        return color.hsbBrightness < 0.62 ? color.withBrightness(0.78) : color
+    }
 }
+
+// MARK: - Team editor / collection roster
 
 struct TeamEditorView: View {
     @Environment(\.modelContext) private var modelContext
     @Bindable var team: Team
     @Query(sort: \Player.number) private var allPlayers: [Player]
+
     @State private var logoPickerItem: PhotosPickerItem?
     @State private var isShowingLogoDeleteConfirmation = false
+    @State private var isShowingColorPicker = false
+    @State private var editingPlayer: Player?
     @State private var playerPendingDeletion: Player?
     @State private var deletionBlockedPlayer: Player?
+
+    private let columns = Array(repeating: GridItem(.flexible(), spacing: 8), count: 3)
 
     private var players: [Player] {
         allPlayers
             .filter { $0.teamID == team.id }
-            .sorted { ($0.number ?? Int.max) < ($1.number ?? Int.max) }
+            .sorted {
+                if ($0.number ?? Int.max) == ($1.number ?? Int.max) {
+                    return ($0.name ?? "") < ($1.name ?? "")
+                }
+                return ($0.number ?? Int.max) < ($1.number ?? Int.max)
+            }
     }
 
-    // チーム内で重複している背番号(行にオレンジで警告表示)。背番号なしは対象外
+    private var registeredCount: Int {
+        players.filter { player in
+            player.imagePath != nil || !(player.name ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }.count
+    }
+
     private var duplicatedNumbers: Set<Int> {
         var seen: Set<Int> = []
         var duplicated: Set<Int> = []
         for player in players {
             guard let number = player.number else { continue }
-            if !seen.insert(number).inserted {
-                duplicated.insert(number)
-            }
+            if !seen.insert(number).inserted { duplicated.insert(number) }
         }
         return duplicated
     }
 
-    // 名簿の背番号・データアイコンに使う色。チームカラーを暗い背景でも
-    // 読めるよう明度を持ち上げる。未設定のときは従来どおり青。
-    private var rosterAccent: Color {
-        guard let hex = team.colorHex, let color = Color(hex: hex) else {
-            return .accentColor
-        }
-        return color.hsbBrightness < 0.7 ? color.withBrightness(0.8) : color
+    private var teamColor: Color {
+        Color(hex: team.colorHex ?? "") ?? .blue
     }
 
-    // 削除ダイアログ用の表示名
-    private func playerLabel(_ player: Player) -> String {
-        let name = (player.name?.isEmpty == false) ? player.name! : "名前未設定"
-        if let number = player.number {
-            return "#\(number) \(name)"
-        }
-        return name
+    private var accent: Color {
+        teamColor.hsbBrightness < 0.62 ? teamColor.withBrightness(0.80) : teamColor
+    }
+
+    private var selectedColorName: String {
+        guard let hex = team.colorHex else { return "未設定" }
+        return TeamColorPalette.options.first(where: { $0.hex == hex })?.name ?? hex
     }
 
     var body: some View {
-        Form {
-            Section("チーム") {
-                HStack(spacing: 12) {
-                    PhotosPicker(selection: $logoPickerItem, matching: .images) {
-                        logoThumbnail
-                    }
-                    .buttonStyle(.plain)
+        ZStack {
+            rosterBackground.ignoresSafeArea()
 
-                    TextField("チーム名", text: $team.name)
+            ScrollView {
+                VStack(spacing: 18) {
+                    teamIdentityCard
+                    colorSelectionCard
+                    rosterSection
                 }
-
-                if team.logoPath != nil {
-                    Button("ロゴを削除", role: .destructive) {
-                        isShowingLogoDeleteConfirmation = true
-                    }
-                }
-            }
-
-            Section {
-                LazyVGrid(
-                    columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: 5),
-                    spacing: 14
-                ) {
-                    teamColorSwatch(hex: nil, name: "未設定")
-                    ForEach(TeamColorPalette.options) { option in
-                        teamColorSwatch(hex: option.hex, name: option.name)
-                    }
-                }
-                .padding(.vertical, 4)
-            } header: {
-                Text("チームカラー")
-            } footer: {
-                Text("サマリー画面の比較表示でチームの色として使われます。記録画面の色は変わりません。")
-            }
-
-            Section {
-                ForEach(players) { player in
-                    PlayerRow(
-                        player: player,
-                        isNumberDuplicated: player.number.map { duplicatedNumbers.contains($0) } ?? false,
-                        accent: rosterAccent,
-                        onDelete: {
-                            requestPlayerDeletion(player)
-                        }
-                    )
-                }
-
-                Button {
-                    addPlayerSlot()
-                } label: {
-                    Label("追加", systemImage: "plus")
-                }
-            } header: {
-                Text("選手名簿")
-            } footer: {
-                Text("名前は空欄のままでも記録できます。背番号はタップで変更でき、大会前にここで設定しておけば、以後の試合のメンバー登録にそのまま引き継がれます。")
+                .padding(.horizontal, 16)
+                .padding(.top, 12)
+                .padding(.bottom, 36)
             }
         }
         .navigationTitle(team.name.isEmpty ? "チーム編集" : team.name)
         .navigationBarTitleDisplayMode(.inline)
-        .onAppear {
-            ensureInitialPlayers()
-        }
+        .toolbarBackground(Color.black.opacity(0.92), for: .navigationBar)
+        .toolbarColorScheme(.dark, for: .navigationBar)
+        .onAppear { ensureInitialPlayers() }
         .onChange(of: logoPickerItem) { _, newItem in
             handleSelectedLogo(newItem)
+        }
+        .onChange(of: team.name) { _, _ in
+            try? modelContext.save()
+        }
+        .sheet(isPresented: $isShowingColorPicker) {
+            TeamColorPickerSheet(team: team)
+        }
+        .sheet(item: $editingPlayer) { player in
+            PlayerCardEditorSheet(
+                player: player,
+                teamName: team.name,
+                accent: accent,
+                isNumberDuplicated: player.number.map { duplicatedNumbers.contains($0) } ?? false,
+                onRequestDelete: {
+                    requestPlayerDeletion(player)
+                }
+            )
         }
         .confirmationDialog(
             "ロゴを削除しますか？",
             isPresented: $isShowingLogoDeleteConfirmation,
             titleVisibility: .visible
         ) {
-            Button("削除する", role: .destructive) {
-                deleteLogo()
-            }
+            Button("削除する", role: .destructive) { deleteLogo() }
             Button("キャンセル", role: .cancel) { }
         }
         .confirmationDialog(
@@ -478,120 +431,227 @@ struct TeamEditorView: View {
                 get: { playerPendingDeletion != nil },
                 set: { if !$0 { playerPendingDeletion = nil } }
             ),
-            presenting: playerPendingDeletion,
-            actions: { player in
-                Button("削除する", role: .destructive) {
-                    deletePlayer(player)
-                    playerPendingDeletion = nil
-                }
-                Button("キャンセル", role: .cancel) {
-                    playerPendingDeletion = nil
-                }
-            },
-            message: { player in
-                Text("「\(playerLabel(player))」を名簿から削除します。写真も消えます。")
+            presenting: playerPendingDeletion
+        ) { player in
+            Button("削除する", role: .destructive) {
+                deletePlayer(player)
+                playerPendingDeletion = nil
             }
-        )
+            Button("キャンセル", role: .cancel) {
+                playerPendingDeletion = nil
+            }
+        } message: { player in
+            Text("「\(playerLabel(player))」を名簿から削除します。写真も消えます。")
+        }
         .alert(
             "削除できません",
             isPresented: Binding(
                 get: { deletionBlockedPlayer != nil },
                 set: { if !$0 { deletionBlockedPlayer = nil } }
             ),
-            presenting: deletionBlockedPlayer,
-            actions: { _ in
-                Button("OK", role: .cancel) {
-                    deletionBlockedPlayer = nil
-                }
-            },
-            message: { player in
-                Text("「\(playerLabel(player))」は試合の記録(得点・メンバー表・交代)で使われているため削除できません。")
+            presenting: deletionBlockedPlayer
+        ) { _ in
+            Button("OK", role: .cancel) {
+                deletionBlockedPlayer = nil
             }
-        )
-    }
-
-    // MARK: - 選手の削除
-
-    private func requestPlayerDeletion(_ player: Player) {
-        if isPlayerUsedInRecords(player) {
-            deletionBlockedPlayer = player
-        } else {
-            playerPendingDeletion = player
+        } message: { player in
+            Text("「\(playerLabel(player))」は試合の記録（得点・メンバー表・交代）で使われているため削除できません。")
         }
     }
 
-    // 得点・メンバー表・交代のどれかで使われている選手は削除させない
-    // (記録が「選手不明」の迷子データになるのを防ぐ)
-    private func isPlayerUsedInRecords(_ player: Player) -> Bool {
-        let playerID = player.id
+    private var rosterBackground: some View {
+        ZStack {
+            LinearGradient(
+                colors: [
+                    Color.black,
+                    Color(red: 0.015, green: 0.035, blue: 0.065),
+                    Color.black
+                ],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            )
 
-        var eventDescriptor = FetchDescriptor<StatEvent>(
-            predicate: #Predicate { $0.playerID == playerID }
-        )
-        eventDescriptor.fetchLimit = 1
-        if (try? modelContext.fetch(eventDescriptor).first) != nil { return true }
-
-        var lineupDescriptor = FetchDescriptor<MatchLineup>(
-            predicate: #Predicate { $0.playerID == playerID }
-        )
-        lineupDescriptor.fetchLimit = 1
-        if (try? modelContext.fetch(lineupDescriptor).first) != nil { return true }
-
-        var substitutionDescriptor = FetchDescriptor<Substitution>(
-            predicate: #Predicate { $0.playerInID == playerID || $0.playerOutID == playerID }
-        )
-        substitutionDescriptor.fetchLimit = 1
-        if (try? modelContext.fetch(substitutionDescriptor).first) != nil { return true }
-
-        return false
-    }
-
-    private func deletePlayer(_ player: Player) {
-        if let photoName = player.imagePath {
-            ImageStorage.delete(named: photoName)
+            LinearGradient(
+                colors: [accent.opacity(0.12), .clear, accent.opacity(0.05)],
+                startPoint: .topTrailing,
+                endPoint: .bottomLeading
+            )
         }
-        modelContext.delete(player)
-        try? modelContext.save()
     }
 
-    @ViewBuilder
-    private func teamColorSwatch(hex: String?, name: String) -> some View {
-        let isSelected = team.colorHex == hex
+    private var teamIdentityCard: some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: 24)
+                .fill(Color.white.opacity(0.055))
+
+            GenericTeamLines(accent: accent)
+                .clipShape(RoundedRectangle(cornerRadius: 24))
+
+            HStack(spacing: 18) {
+                PhotosPicker(selection: $logoPickerItem, matching: .images) {
+                    ZStack(alignment: .bottomTrailing) {
+                        logoThumbnail
+
+                        Image(systemName: "camera.fill")
+                            .font(.caption.weight(.bold))
+                            .foregroundStyle(.white)
+                            .frame(width: 32, height: 32)
+                            .background(accent)
+                            .clipShape(Circle())
+                            .overlay(Circle().stroke(Color.black.opacity(0.35), lineWidth: 1))
+                    }
+                }
+                .buttonStyle(.plain)
+
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("チーム")
+                        .font(.caption.weight(.bold))
+                        .foregroundStyle(accent)
+
+                    TextField("チーム名", text: $team.name)
+                        .font(.title3.weight(.black))
+                        .foregroundStyle(.white)
+                        .textInputAutocapitalization(.words)
+
+                    Text("ロゴをタップして変更")
+                        .font(.subheadline)
+                        .foregroundStyle(.white.opacity(0.55))
+
+                    if team.logoPath != nil {
+                        Button("ロゴを削除", role: .destructive) {
+                            isShowingLogoDeleteConfirmation = true
+                        }
+                        .font(.caption.weight(.bold))
+                    }
+                }
+
+                Spacer(minLength: 0)
+            }
+            .padding(20)
+        }
+        .overlay(
+            RoundedRectangle(cornerRadius: 24)
+                .stroke(accent.opacity(0.72), lineWidth: 1.25)
+        )
+        .shadow(color: accent.opacity(0.16), radius: 14, y: 8)
+    }
+
+    private var colorSelectionCard: some View {
         Button {
-            team.colorHex = hex
-            try? modelContext.save()
+            isShowingColorPicker = true
         } label: {
-            VStack(spacing: 4) {
-                ZStack {
-                    if let hex, let color = Color(hex: hex) {
+            HStack(spacing: 14) {
+                Circle()
+                    .fill(team.colorHex == nil ? Color.clear : teamColor)
+                    .frame(width: 46, height: 46)
+                    .overlay(
                         Circle()
-                            .fill(color)
-                    } else {
-                        Circle()
-                            .stroke(Color.secondary.opacity(0.6), style: StrokeStyle(lineWidth: 1.5, dash: [3]))
-                            .background(Circle().fill(Color(.systemBackground)))
-                            .overlay(
-                                Image(systemName: "circle.slash")
-                                    .font(.headline)
-                                    .foregroundStyle(.secondary)
-                            )
+                            .stroke(team.colorHex == nil ? Color.white.opacity(0.35) : Color.white.opacity(0.62), lineWidth: 2)
+                    )
+                    .overlay {
+                        if team.colorHex == nil {
+                            Image(systemName: "circle.slash")
+                                .foregroundStyle(.white.opacity(0.55))
+                        }
                     }
-                    if isSelected {
-                        Circle()
-                            .stroke(Color.primary, lineWidth: 3)
-                    }
-                }
-                .frame(width: 40, height: 40)
 
-                Text(name)
-                    .font(.caption2)
-                    .foregroundStyle(isSelected ? .primary : .secondary)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.55)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("チームカラー")
+                        .font(.headline.weight(.black))
+                        .foregroundStyle(accent)
+                    Text("\(selectedColorName)・カードの縁と背番号に使用")
+                        .font(.caption)
+                        .foregroundStyle(accent.opacity(0.72))
+                }
+
+                Spacer()
+
+                Image(systemName: "chevron.right")
+                    .font(.headline.weight(.bold))
+                    .foregroundStyle(.white)
             }
-            .frame(maxWidth: .infinity)
+            .padding(18)
+            .background(Color.white.opacity(0.055))
+            .clipShape(RoundedRectangle(cornerRadius: 20))
+            .overlay(
+                RoundedRectangle(cornerRadius: 20)
+                    .stroke(accent.opacity(0.48), lineWidth: 1)
+            )
         }
         .buttonStyle(.plain)
+    }
+
+    private var rosterSection: some View {
+        VStack(spacing: 14) {
+            HStack(alignment: .bottom) {
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack(spacing: 8) {
+                        Text("選手名簿")
+                            .font(.title2.weight(.black))
+                            .foregroundStyle(.white)
+                        HStack(spacing: 3) {
+                            ForEach(0..<3, id: \.self) { _ in
+                                Capsule()
+                                    .fill(accent)
+                                    .frame(width: 13, height: 3)
+                                    .rotationEffect(.degrees(-45))
+                            }
+                        }
+                    }
+
+                    Text("カードをタップして編集・データ確認")
+                        .font(.subheadline)
+                        .foregroundStyle(.white.opacity(0.52))
+                }
+
+                Spacer()
+
+                Text("\(registeredCount)/\(players.count)")
+                    .font(.title3.weight(.black).monospacedDigit())
+                    .foregroundStyle(accent)
+            }
+
+            LazyVGrid(columns: columns, spacing: 10) {
+                ForEach(players) { player in
+                    Button {
+                        editingPlayer = player
+                    } label: {
+                        PlayerCollectionCard(
+                            player: player,
+                            accent: accent,
+                            isNumberDuplicated: player.number.map { duplicatedNumbers.contains($0) } ?? false
+                        )
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("\(playerLabel(player))を編集")
+                }
+            }
+
+            Button {
+                addPlayerSlot()
+            } label: {
+                Label("選手を追加", systemImage: "plus")
+                    .font(.headline.weight(.black))
+                    .foregroundStyle(.white)
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 52)
+                    .background(
+                        LinearGradient(
+                            colors: [accent, teamColor.opacity(0.78)],
+                            startPoint: .leading,
+                            endPoint: .trailing
+                        )
+                    )
+                    .clipShape(RoundedRectangle(cornerRadius: 16))
+                    .shadow(color: accent.opacity(0.22), radius: 10, y: 5)
+            }
+            .buttonStyle(.plain)
+
+            Text("名前は空欄のままでも記録できます。背番号は選手カードをタップして変更できます。")
+                .font(.caption)
+                .foregroundStyle(.white.opacity(0.45))
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
     }
 
     @ViewBuilder
@@ -600,14 +660,17 @@ struct TeamEditorView: View {
             Image(uiImage: uiImage)
                 .resizable()
                 .scaledToFill()
-                .frame(width: 56, height: 56)
-                .clipShape(RoundedRectangle(cornerRadius: 8))
+                .frame(width: 104, height: 104)
+                .clipShape(RoundedRectangle(cornerRadius: 20))
         } else {
-            Image(systemName: "shield.fill")
-                .resizable()
-                .scaledToFit()
-                .frame(width: 56, height: 56)
-                .foregroundStyle(.secondary)
+            ZStack {
+                RoundedRectangle(cornerRadius: 20)
+                    .fill(Color.black.opacity(0.32))
+                Image(systemName: "shield.fill")
+                    .font(.system(size: 48, weight: .medium))
+                    .foregroundStyle(.white.opacity(0.78))
+            }
+            .frame(width: 104, height: 104)
         }
     }
 
@@ -637,137 +700,640 @@ struct TeamEditorView: View {
     }
 
     private func ensureInitialPlayers() {
-        let existingNumbers = Set(players.compactMap(\.number))
         guard players.isEmpty else { return }
-        for number in 1...15 where !existingNumbers.contains(number) {
-            let player = Player(teamID: team.id, number: number)
-            modelContext.insert(player)
+        for number in 1...15 {
+            modelContext.insert(Player(teamID: team.id, number: number))
         }
+        try? modelContext.save()
     }
 
     private func addPlayerSlot() {
         let nextNumber = (players.compactMap(\.number).max() ?? 0) + 1
         let player = Player(teamID: team.id, number: nextNumber)
         modelContext.insert(player)
+        try? modelContext.save()
+        editingPlayer = player
+    }
+
+    private func playerLabel(_ player: Player) -> String {
+        let name = (player.name?.isEmpty == false) ? player.name! : "名前未設定"
+        if let number = player.number { return "#\(number) \(name)" }
+        return name
+    }
+
+    private func requestPlayerDeletion(_ player: Player) {
+        editingPlayer = nil
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
+            if isPlayerUsedInRecords(player) {
+                deletionBlockedPlayer = player
+            } else {
+                playerPendingDeletion = player
+            }
+        }
+    }
+
+    private func isPlayerUsedInRecords(_ player: Player) -> Bool {
+        let playerID = player.id
+
+        var eventDescriptor = FetchDescriptor<StatEvent>(
+            predicate: #Predicate { $0.playerID == playerID }
+        )
+        eventDescriptor.fetchLimit = 1
+        if (try? modelContext.fetch(eventDescriptor).first) != nil { return true }
+
+        var lineupDescriptor = FetchDescriptor<MatchLineup>(
+            predicate: #Predicate { $0.playerID == playerID }
+        )
+        lineupDescriptor.fetchLimit = 1
+        if (try? modelContext.fetch(lineupDescriptor).first) != nil { return true }
+
+        var substitutionDescriptor = FetchDescriptor<Substitution>(
+            predicate: #Predicate { $0.playerInID == playerID || $0.playerOutID == playerID }
+        )
+        substitutionDescriptor.fetchLimit = 1
+        return ((try? modelContext.fetch(substitutionDescriptor).first) != nil)
+    }
+
+    private func deletePlayer(_ player: Player) {
+        if let photoName = player.imagePath {
+            ImageStorage.delete(named: photoName)
+        }
+        modelContext.delete(player)
+        try? modelContext.save()
     }
 }
 
-private struct PlayerRow: View {
+// MARK: - Reusable collection card
+
+private struct PlayerCollectionCard: View {
     @Bindable var player: Player
-    // チーム内で背番号が重複しているとき true(オレンジで警告表示)
-    var isNumberDuplicated: Bool = false
-    // 背番号・データアイコンの色(チームカラー。暗い時のフォールバックは呼び出し側で補正)
-    var accent: Color = .accentColor
-    // スワイプ削除のリクエスト(使用中チェックは呼び出し側が行う)
-    var onDelete: (() -> Void)? = nil
-    @Environment(\.modelContext) private var modelContext
-    @State private var photoPickerItem: PhotosPickerItem?
-    @State private var isShowingPhotoDeleteConfirmation = false
-    @State private var isEditingNumber = false
-    @State private var numberText = ""
+    let accent: Color
+    let isNumberDuplicated: Bool
+
+    private var displayName: String {
+        let trimmed = (player.name ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? "名前未設定" : trimmed
+    }
 
     var body: some View {
-        HStack(spacing: 12) {
-            PhotosPicker(selection: $photoPickerItem, matching: .images) {
-                photoThumbnail
-            }
-            .buttonStyle(.plain)
+        GeometryReader { proxy in
+            let cardShape = CollectionCardShape(cut: max(8, proxy.size.width * 0.075))
+            let photoHeight = proxy.size.height * 0.76
 
-            // 背番号はタップで変更(大会前にここで事前登録しておく)
-            Button {
-                numberText = player.number.map(String.init) ?? ""
-                isEditingNumber = true
-            } label: {
-                Text(player.number.map { "#\($0)" } ?? "ー")
-                    .font(.headline.monospacedDigit())
-                    .foregroundStyle(
-                        isNumberDuplicated ? Color.orange
-                            : (player.number == nil ? Color.secondary : accent)
-                    )
-            }
-            .buttonStyle(.plain)
-            .frame(width: 44, alignment: .leading)
+            ZStack(alignment: .topLeading) {
+                cardBackground
 
-            TextField("名前（任意）", text: playerName)
-                .textInputAutocapitalization(.words)
+                playerPhoto(height: photoHeight)
 
-            if player.imagePath != nil {
-                Button {
-                    isShowingPhotoDeleteConfirmation = true
-                } label: {
-                    Image(systemName: "xmark.circle.fill")
-                        .foregroundStyle(.secondary)
+                VStack(spacing: 0) {
+                    Spacer()
+                    namePlate
+                        .frame(height: proxy.size.height - photoHeight)
                 }
-                .buttonStyle(.plain)
-            }
 
-            // 個人成績の画面へ(名前入力の邪魔をしないよう、専用ボタンで)
-            NavigationLink {
-                PlayerDetailView(player: player)
-            } label: {
+                numberBadge
+                    .padding(7)
+
                 Image(systemName: "chart.bar.fill")
-                    .font(.subheadline)
+                    .font(.caption.weight(.black))
                     .foregroundStyle(accent)
+                    .padding(9)
+                    .frame(maxWidth: .infinity, alignment: .trailing)
             }
-            .buttonStyle(.plain)
-            .frame(width: 30)
-            .accessibilityLabel("個人成績を見る")
+            .clipShape(cardShape)
+            .overlay(cardShape.stroke(accent.opacity(0.95), lineWidth: 1.45))
+            .overlay(cardShape.inset(by: 3).stroke(accent.opacity(0.24), lineWidth: 0.75))
+            .shadow(color: accent.opacity(0.20), radius: 6, y: 3)
         }
-        .onChange(of: photoPickerItem) { _, newItem in
-            handleSelectedPhoto(newItem)
-        }
-        .confirmationDialog(
-            "写真を削除しますか？",
-            isPresented: $isShowingPhotoDeleteConfirmation,
-            titleVisibility: .visible
-        ) {
-            Button("削除する", role: .destructive) {
-                deletePhoto()
-            }
-            Button("キャンセル", role: .cancel) { }
-        }
-        .alert("背番号を変更", isPresented: $isEditingNumber) {
-            TextField("番号(空欄で背番号なし)", text: $numberText)
-                .keyboardType(.numberPad)
-            Button("保存") {
-                let trimmed = numberText.trimmingCharacters(in: .whitespaces)
-                if trimmed.isEmpty {
-                    // 空欄 = 背番号なし(試合に登録されていない選手など)
-                    player.number = nil
-                    try? modelContext.save()
-                } else if let number = Int(trimmed), number > 0 {
-                    player.number = number
-                    try? modelContext.save()
-                }
-            }
-            Button("キャンセル", role: .cancel) { }
-        } message: {
-            Text("空欄のまま保存すると「背番号なし」になります。以後の試合のメンバー登録に自動で使われます(登録済みの試合は変わりません)。")
-        }
-        .swipeActions(edge: .trailing, allowsFullSwipe: false) {
-            if let onDelete {
-                Button("削除", role: .destructive) {
-                    onDelete()
-                }
-            }
+        // 1:1 より名前欄の分だけ少し縦長。3列でも顔写真を大きく保つ。
+        .aspectRatio(0.78, contentMode: .fit)
+    }
+
+    private var cardBackground: some View {
+        ZStack {
+            LinearGradient(
+                colors: [
+                    Color(red: 0.93, green: 0.94, blue: 0.96),
+                    Color(red: 0.72, green: 0.76, blue: 0.82),
+                    Color(red: 0.96, green: 0.97, blue: 0.98)
+                ],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            )
+
+            LinearGradient(
+                colors: [accent.opacity(0.16), .clear, accent.opacity(0.10)],
+                startPoint: .topTrailing,
+                endPoint: .bottomLeading
+            )
+
+            CardTextureLines()
+                .opacity(0.20)
         }
     }
 
     @ViewBuilder
-    private var photoThumbnail: some View {
+    private func playerPhoto(height: CGFloat) -> some View {
         if let name = player.imagePath, let uiImage = ImageStorage.image(named: name) {
-            Image(uiImage: uiImage)
-                .resizable()
-                .scaledToFill()
-                .frame(width: 40, height: 40)
-                .clipShape(Circle())
+            if uiImage.hasTransparentPixels {
+                Image(uiImage: uiImage)
+                    .resizable()
+                    .scaledToFit()
+                    .padding(.horizontal, 3)
+                    .padding(.top, 4)
+                    .frame(maxWidth: .infinity)
+                    .frame(height: height, alignment: .bottom)
+            } else {
+                Image(uiImage: uiImage)
+                    .resizable()
+                    .scaledToFill()
+                    .frame(maxWidth: .infinity)
+                    .frame(height: height)
+                    .clipped()
+            }
         } else {
-            Image(systemName: "person.crop.circle")
-                .resizable()
-                .scaledToFit()
-                .frame(width: 40, height: 40)
-                .foregroundStyle(.secondary)
+            VStack(spacing: 7) {
+                Image(systemName: "person.crop.rectangle")
+                    .font(.system(size: 34, weight: .medium))
+                Text("写真を追加")
+                    .font(.caption2.weight(.bold))
+            }
+            .foregroundStyle(Color.black.opacity(0.38))
+            .frame(maxWidth: .infinity)
+            .frame(height: height)
         }
+    }
+
+    private var namePlate: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(displayName)
+                .font(.system(size: 13, weight: .black))
+                .foregroundStyle(.white)
+                .lineLimit(1)
+                .minimumScaleFactor(0.62)
+
+            HStack(spacing: 4) {
+                Text(player.imagePath == nil ? "PHOTO REQUIRED" : "RUGBY AS")
+                    .font(.system(size: 7.5, weight: .bold, design: .rounded))
+                    .tracking(0.7)
+                    .foregroundStyle(accent)
+                    .lineLimit(1)
+
+                Spacer(minLength: 0)
+
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 8, weight: .black))
+                    .foregroundStyle(.white.opacity(0.55))
+            }
+        }
+        .padding(.horizontal, 9)
+        .padding(.vertical, 7)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            LinearGradient(
+                colors: [Color.black.opacity(0.96), accent.opacity(0.24), Color.black.opacity(0.94)],
+                startPoint: .leading,
+                endPoint: .trailing
+            )
+        )
+        .overlay(alignment: .top) {
+            Rectangle()
+                .fill(accent.opacity(0.55))
+                .frame(height: 1)
+        }
+    }
+
+    private var numberBadge: some View {
+        Text(player.number.map { "#\($0)" } ?? "—")
+            .font(.caption.weight(.black).monospacedDigit())
+            .foregroundStyle(.white)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 5)
+            .background(
+                isNumberDuplicated ? Color.orange : (player.number == nil ? Color.gray : accent)
+            )
+            .clipShape(CollectionNumberBadgeShape())
+    }
+}
+
+private struct CollectionCardShape: InsettableShape {
+    var cut: CGFloat = 10
+    var insetAmount: CGFloat = 0
+
+    func path(in rect: CGRect) -> Path {
+        let r = rect.insetBy(dx: insetAmount, dy: insetAmount)
+        let c = min(cut, min(r.width, r.height) * 0.18)
+        var path = Path()
+        path.move(to: CGPoint(x: r.minX + c, y: r.minY))
+        path.addLine(to: CGPoint(x: r.maxX - c, y: r.minY))
+        path.addLine(to: CGPoint(x: r.maxX, y: r.minY + c))
+        path.addLine(to: CGPoint(x: r.maxX, y: r.maxY - c))
+        path.addLine(to: CGPoint(x: r.maxX - c, y: r.maxY))
+        path.addLine(to: CGPoint(x: r.minX + c, y: r.maxY))
+        path.addLine(to: CGPoint(x: r.minX, y: r.maxY - c))
+        path.addLine(to: CGPoint(x: r.minX, y: r.minY + c))
+        path.closeSubpath()
+        return path
+    }
+
+    func inset(by amount: CGFloat) -> CollectionCardShape {
+        var copy = self
+        copy.insetAmount += amount
+        return copy
+    }
+}
+
+private struct CollectionNumberBadgeShape: Shape {
+    func path(in rect: CGRect) -> Path {
+        var path = Path()
+        path.move(to: CGPoint(x: rect.minX, y: rect.minY))
+        path.addLine(to: CGPoint(x: rect.maxX, y: rect.minY))
+        path.addLine(to: CGPoint(x: rect.maxX, y: rect.maxY * 0.72))
+        path.addLine(to: CGPoint(x: rect.maxX * 0.80, y: rect.maxY))
+        path.addLine(to: CGPoint(x: rect.minX, y: rect.maxY))
+        path.closeSubpath()
+        return path
+    }
+}
+
+private struct CardTextureLines: View {
+    var body: some View {
+        GeometryReader { proxy in
+            Path { path in
+                let spacing: CGFloat = 18
+                var x: CGFloat = -proxy.size.height
+                while x < proxy.size.width + proxy.size.height {
+                    path.move(to: CGPoint(x: x, y: proxy.size.height))
+                    path.addLine(to: CGPoint(x: x + proxy.size.height, y: 0))
+                    x += spacing
+                }
+            }
+            .stroke(Color.white, lineWidth: 0.6)
+        }
+    }
+}
+
+private struct GenericTeamLines: View {
+    let accent: Color
+
+    var body: some View {
+        GeometryReader { proxy in
+            ZStack {
+                LinearGradient(
+                    colors: [accent.opacity(0.16), .clear, accent.opacity(0.08)],
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
+                )
+
+                Path { path in
+                    let startX = proxy.size.width * 0.70
+                    for index in 0..<5 {
+                        let offset = CGFloat(index) * 12
+                        path.move(to: CGPoint(x: startX + offset, y: proxy.size.height))
+                        path.addLine(to: CGPoint(x: proxy.size.width, y: proxy.size.height * 0.34 + offset))
+                    }
+                }
+                .stroke(accent.opacity(0.26), lineWidth: 1)
+            }
+        }
+        .allowsHitTesting(false)
+    }
+}
+
+// MARK: - Team color picker
+
+private struct TeamColorPickerSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    @Environment(\.modelContext) private var modelContext
+    @Bindable var team: Team
+
+    private let columns = Array(repeating: GridItem(.flexible(), spacing: 12), count: 3)
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                LazyVGrid(columns: columns, spacing: 14) {
+                    colorButton(hex: nil, name: "未設定")
+                    ForEach(TeamColorPalette.options) { option in
+                        colorButton(hex: option.hex, name: option.name)
+                    }
+                }
+                .padding(18)
+            }
+            .background(Color.black.ignoresSafeArea())
+            .navigationTitle("チームカラー")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("完了") { dismiss() }
+                }
+            }
+        }
+        .presentationDetents([.medium, .large])
+        .preferredColorScheme(.dark)
+    }
+
+    private func colorButton(hex: String?, name: String) -> some View {
+        let isSelected = team.colorHex == hex
+        return Button {
+            team.colorHex = hex
+            try? modelContext.save()
+        } label: {
+            VStack(spacing: 8) {
+                ZStack {
+                    RoundedRectangle(cornerRadius: 16)
+                        .fill(Color.white.opacity(0.06))
+                        .frame(height: 74)
+
+                    if let hex, let color = Color(hex: hex) {
+                        Circle()
+                            .fill(color)
+                            .frame(width: 44, height: 44)
+                            .shadow(color: color.opacity(0.38), radius: 8)
+                    } else {
+                        Circle()
+                            .stroke(Color.white.opacity(0.35), style: StrokeStyle(lineWidth: 2, dash: [4]))
+                            .frame(width: 44, height: 44)
+                            .overlay(
+                                Image(systemName: "circle.slash")
+                                    .foregroundStyle(.white.opacity(0.55))
+                            )
+                    }
+
+                    if isSelected {
+                        Image(systemName: "checkmark.circle.fill")
+                            .font(.title3)
+                            .foregroundStyle(.white)
+                            .background(Circle().fill(Color.black))
+                            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
+                            .padding(7)
+                    }
+                }
+                .overlay(
+                    RoundedRectangle(cornerRadius: 16)
+                        .stroke(isSelected ? Color.white : Color.white.opacity(0.08), lineWidth: isSelected ? 2 : 1)
+                )
+
+                Text(name)
+                    .font(.caption.weight(isSelected ? .black : .semibold))
+                    .foregroundStyle(isSelected ? .white : .white.opacity(0.65))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
+            }
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+// MARK: - Player editor
+
+private struct PlayerCardEditorSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    @Environment(\.modelContext) private var modelContext
+
+    @Bindable var player: Player
+    let teamName: String
+    let accent: Color
+    let isNumberDuplicated: Bool
+    let onRequestDelete: () -> Void
+
+    @State private var nameText: String
+    @State private var numberText: String
+    @State private var photoPickerItem: PhotosPickerItem?
+    @State private var isShowingPhotoDeleteConfirmation = false
+    @State private var isRemovingBackground = false
+    @State private var backgroundRemovalError: String?
+
+    init(
+        player: Player,
+        teamName: String,
+        accent: Color,
+        isNumberDuplicated: Bool,
+        onRequestDelete: @escaping () -> Void
+    ) {
+        self._player = Bindable(wrappedValue: player)
+        self.teamName = teamName
+        self.accent = accent
+        self.isNumberDuplicated = isNumberDuplicated
+        self.onRequestDelete = onRequestDelete
+        self._nameText = State(initialValue: player.name ?? "")
+        self._numberText = State(initialValue: player.number.map(String.init) ?? "")
+    }
+
+    var body: some View {
+        NavigationStack {
+            ZStack {
+                LinearGradient(
+                    colors: [Color.black, Color(red: 0.02, green: 0.04, blue: 0.07)],
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
+                .ignoresSafeArea()
+
+                ScrollView {
+                    VStack(spacing: 20) {
+                        PlayerCollectionCard(
+                            player: player,
+                            accent: accent,
+                            isNumberDuplicated: isNumberDuplicated
+                        )
+                        .frame(width: 240)
+
+                        editorFields
+                        photoActions
+                        statsLink
+                        deleteButton
+                    }
+                    .padding(18)
+                    .padding(.bottom, 28)
+                }
+            }
+            .navigationTitle("選手詳細")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("閉じる") { dismiss() }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("保存") { saveAndDismiss() }
+                        .fontWeight(.bold)
+                        .foregroundStyle(accent)
+                }
+            }
+            .onChange(of: photoPickerItem) { _, newItem in
+                handleSelectedPhoto(newItem)
+            }
+            .confirmationDialog(
+                "写真を削除しますか？",
+                isPresented: $isShowingPhotoDeleteConfirmation,
+                titleVisibility: .visible
+            ) {
+                Button("削除する", role: .destructive) { deletePhoto() }
+                Button("キャンセル", role: .cancel) { }
+            }
+            .alert("背景を削除できませんでした", isPresented: Binding(
+                get: { backgroundRemovalError != nil },
+                set: { if !$0 { backgroundRemovalError = nil } }
+            )) {
+                Button("OK", role: .cancel) { backgroundRemovalError = nil }
+            } message: {
+                Text(backgroundRemovalError ?? "人物がはっきり写った写真で再度お試しください。")
+            }
+        }
+        .preferredColorScheme(.dark)
+    }
+
+    private var editorFields: some View {
+        VStack(spacing: 0) {
+            fieldRow(title: "背番号") {
+                TextField("未設定", text: $numberText)
+                    .keyboardType(.numberPad)
+                    .multilineTextAlignment(.trailing)
+                    .foregroundStyle(isNumberDuplicated ? Color.orange : Color.white)
+            }
+
+            Divider().overlay(Color.white.opacity(0.10))
+
+            fieldRow(title: "名前") {
+                TextField("名前（任意）", text: $nameText)
+                    .textInputAutocapitalization(.words)
+                    .multilineTextAlignment(.trailing)
+                    .foregroundStyle(.white)
+            }
+
+            if isNumberDuplicated {
+                Text("同じ背番号の選手が登録されています。")
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.top, 10)
+            }
+        }
+        .padding(16)
+        .background(Color.white.opacity(0.06))
+        .clipShape(RoundedRectangle(cornerRadius: 18))
+        .overlay(RoundedRectangle(cornerRadius: 18).stroke(Color.white.opacity(0.10), lineWidth: 1))
+    }
+
+    private func fieldRow<Content: View>(title: String, @ViewBuilder content: () -> Content) -> some View {
+        HStack(spacing: 14) {
+            Text(title)
+                .font(.subheadline.weight(.bold))
+                .foregroundStyle(.white.opacity(0.55))
+                .frame(width: 58, alignment: .leading)
+            content()
+        }
+        .frame(minHeight: 48)
+    }
+
+    private var photoActions: some View {
+        VStack(spacing: 10) {
+            PhotosPicker(selection: $photoPickerItem, matching: .images) {
+                Label(player.imagePath == nil ? "写真を追加" : "写真を変更", systemImage: "photo")
+                    .font(.headline.weight(.bold))
+                    .foregroundStyle(.white)
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 50)
+                    .background(Color.white.opacity(0.08))
+                    .clipShape(RoundedRectangle(cornerRadius: 15))
+            }
+            .buttonStyle(.plain)
+
+            if player.imagePath != nil {
+                Button {
+                    removePhotoBackground()
+                } label: {
+                    HStack(spacing: 9) {
+                        if isRemovingBackground {
+                            ProgressView().tint(.white)
+                        } else {
+                            Image(systemName: "wand.and.stars")
+                        }
+                        Text(isRemovingBackground ? "背景を削除中…" : "背景を自動で削除")
+                    }
+                    .font(.headline.weight(.bold))
+                    .foregroundStyle(.white)
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 50)
+                    .background(accent.opacity(0.84))
+                    .clipShape(RoundedRectangle(cornerRadius: 15))
+                }
+                .buttonStyle(.plain)
+                .disabled(isRemovingBackground)
+
+                Button("写真を削除", role: .destructive) {
+                    isShowingPhotoDeleteConfirmation = true
+                }
+                .font(.subheadline.weight(.bold))
+                .frame(maxWidth: .infinity)
+            }
+
+            Text("背景削除後は透明PNGとして保存され、カードの共通背景に自然に重なります。")
+                .font(.caption)
+                .foregroundStyle(.white.opacity(0.45))
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    private var statsLink: some View {
+        NavigationLink {
+            PlayerDetailView(player: player)
+        } label: {
+            HStack(spacing: 12) {
+                Image(systemName: "chart.bar.fill")
+                    .foregroundStyle(accent)
+                    .frame(width: 34, height: 34)
+                    .background(accent.opacity(0.12))
+                    .clipShape(RoundedRectangle(cornerRadius: 9))
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("個人成績を見る")
+                        .font(.headline.weight(.bold))
+                        .foregroundStyle(.white)
+                    Text("試合別・大会別の記録を確認")
+                        .font(.caption)
+                        .foregroundStyle(.white.opacity(0.48))
+                }
+
+                Spacer()
+                Image(systemName: "chevron.right")
+                    .foregroundStyle(.white.opacity(0.42))
+            }
+            .padding(16)
+            .background(Color.white.opacity(0.06))
+            .clipShape(RoundedRectangle(cornerRadius: 18))
+            .overlay(RoundedRectangle(cornerRadius: 18).stroke(Color.white.opacity(0.10), lineWidth: 1))
+        }
+        .buttonStyle(.plain)
+    }
+
+    private var deleteButton: some View {
+        Button(role: .destructive) {
+            onRequestDelete()
+            dismiss()
+        } label: {
+            Label("選手を削除", systemImage: "trash")
+                .font(.subheadline.weight(.bold))
+                .frame(maxWidth: .infinity)
+                .frame(height: 46)
+        }
+        .buttonStyle(.bordered)
+        .tint(.red)
+    }
+
+    private func saveAndDismiss() {
+        let trimmedName = nameText.trimmingCharacters(in: .whitespacesAndNewlines)
+        player.name = trimmedName.isEmpty ? nil : trimmedName
+
+        let trimmedNumber = numberText.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmedNumber.isEmpty {
+            player.number = nil
+        } else if let number = Int(trimmedNumber), number > 0 {
+            player.number = number
+        }
+
+        try? modelContext.save()
+        dismiss()
     }
 
     private func handleSelectedPhoto(_ item: PhotosPickerItem?) {
@@ -776,15 +1342,42 @@ private struct PlayerRow: View {
             let data = try? await item.loadTransferable(type: Data.self)
             await MainActor.run {
                 if let data, let newName = ImageStorage.save(data) {
-                    if let oldName = player.imagePath {
-                        ImageStorage.delete(named: oldName)
-                    }
-                    player.imagePath = newName
-                    try? modelContext.save()
+                    replacePhoto(with: newName)
                 }
                 photoPickerItem = nil
             }
         }
+    }
+
+    private func removePhotoBackground() {
+        guard !isRemovingBackground,
+              let name = player.imagePath,
+              let image = ImageStorage.image(named: name),
+              let sourceData = image.pngData() else { return }
+
+        isRemovingBackground = true
+        Task {
+            let outputData = await Task.detached(priority: .userInitiated) {
+                try? ForegroundBackgroundRemover.removeBackground(from: sourceData)
+            }.value
+
+            await MainActor.run {
+                defer { isRemovingBackground = false }
+                guard let outputData, let newName = ImageStorage.savePNG(outputData) else {
+                    backgroundRemovalError = "人物の輪郭を検出できませんでした。人物が大きく、背景との区別がつきやすい写真で再度お試しください。"
+                    return
+                }
+                replacePhoto(with: newName)
+            }
+        }
+    }
+
+    private func replacePhoto(with newName: String) {
+        if let oldName = player.imagePath {
+            ImageStorage.delete(named: oldName)
+        }
+        player.imagePath = newName
+        try? modelContext.save()
     }
 
     private func deletePhoto() {
@@ -794,15 +1387,71 @@ private struct PlayerRow: View {
         player.imagePath = nil
         try? modelContext.save()
     }
+}
 
-    private var playerName: Binding<String> {
-        Binding(
-            get: { player.name ?? "" },
-            set: { newValue in
-                let trimmedName = newValue.trimmingCharacters(in: .whitespacesAndNewlines)
-                player.name = trimmedName.isEmpty ? nil : trimmedName
-            }
+// MARK: - Background removal
+
+private enum ForegroundBackgroundRemover {
+    static func removeBackground(from data: Data) throws -> Data {
+        guard let image = UIImage(data: data),
+              let inputImage = CIImage(image: image, options: [.applyOrientationProperty: true]) else {
+            throw BackgroundRemovalError.invalidImage
+        }
+
+        let request = VNGenerateForegroundInstanceMaskRequest()
+        let handler = VNImageRequestHandler(ciImage: inputImage, options: [:])
+        try handler.perform([request])
+
+        guard let observation = request.results?.first,
+              !observation.allInstances.isEmpty else {
+            throw BackgroundRemovalError.noForeground
+        }
+
+        let maskBuffer = try observation.generateScaledMaskForImage(
+            forInstances: observation.allInstances,
+            from: handler
         )
+        let maskImage = CIImage(cvPixelBuffer: maskBuffer)
+        let transparentBackground = CIImage(
+            color: CIColor(red: 0, green: 0, blue: 0, alpha: 0)
+        ).cropped(to: inputImage.extent)
+
+        let outputImage = inputImage.applyingFilter(
+            "CIBlendWithMask",
+            parameters: [
+                kCIInputBackgroundImageKey: transparentBackground,
+                kCIInputMaskImageKey: maskImage
+            ]
+        )
+
+        let context = CIContext(options: nil)
+        guard let cgImage = context.createCGImage(outputImage, from: inputImage.extent) else {
+            throw BackgroundRemovalError.renderFailed
+        }
+
+        let output = UIImage(cgImage: cgImage)
+        guard let pngData = output.pngData() else {
+            throw BackgroundRemovalError.renderFailed
+        }
+        return pngData
+    }
+
+    private enum BackgroundRemovalError: Error {
+        case invalidImage
+        case noForeground
+        case renderFailed
+    }
+}
+
+private extension UIImage {
+    var hasTransparentPixels: Bool {
+        guard let alphaInfo = cgImage?.alphaInfo else { return false }
+        switch alphaInfo {
+        case .first, .last, .premultipliedFirst, .premultipliedLast:
+            return true
+        default:
+            return false
+        }
     }
 }
 
@@ -816,6 +1465,7 @@ private struct PlayerRow: View {
         Tournament.self,
         Match.self,
         StatEvent.self,
+        MatchLineup.self,
         Substitution.self
     ], inMemory: true)
 }

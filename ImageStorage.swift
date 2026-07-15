@@ -27,15 +27,15 @@ enum ImageStorage {
         guard let image = UIImage(data: data) else { return nil }
         let resized = resized(image, maxDimension: 1024)
         guard let jpegData = resized.jpegData(compressionQuality: 0.8) else { return nil }
-        let name = UUID().uuidString + ".jpg"
-        let url = directory.appendingPathComponent(name)
-        do {
-            try jpegData.write(to: url)
-            cache.setObject(resized, forKey: name as NSString)
-            return name
-        } catch {
-            return nil
-        }
+        return write(jpegData, image: resized, fileExtension: "jpg")
+    }
+
+    /// 透明背景を保持したまま PNG で保存する。背景削除後の選手写真に使う。
+    static func savePNG(_ data: Data) -> String? {
+        guard let image = UIImage(data: data) else { return nil }
+        let resized = resized(image, maxDimension: 1024)
+        guard let pngData = resized.pngData() else { return nil }
+        return write(pngData, image: resized, fileExtension: "png")
     }
 
     static func image(named name: String) -> UIImage? {
@@ -57,6 +57,18 @@ enum ImageStorage {
         cache.removeObject(forKey: name as NSString)
     }
 
+    private static func write(_ data: Data, image: UIImage, fileExtension: String) -> String? {
+        let name = UUID().uuidString + "." + fileExtension
+        let url = directory.appendingPathComponent(name)
+        do {
+            try data.write(to: url)
+            cache.setObject(image, forKey: name as NSString)
+            return name
+        } catch {
+            return nil
+        }
+    }
+
     /// 長辺を maxDimension に収めるリサイズ。既に小さいときは原画を返す。
     private static func resized(_ image: UIImage, maxDimension: CGFloat) -> UIImage {
         let originalSize = image.size
@@ -64,7 +76,10 @@ enum ImageStorage {
         guard longestSide > maxDimension else { return image }
         let scale = maxDimension / longestSide
         let newSize = CGSize(width: originalSize.width * scale, height: originalSize.height * scale)
-        let renderer = UIGraphicsImageRenderer(size: newSize)
+        let format = UIGraphicsImageRendererFormat.default()
+        format.opaque = false
+        format.scale = 1
+        let renderer = UIGraphicsImageRenderer(size: newSize, format: format)
         return renderer.image { _ in
             image.draw(in: CGRect(origin: .zero, size: newSize))
         }
