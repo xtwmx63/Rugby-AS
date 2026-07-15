@@ -799,11 +799,13 @@ private struct PlayerCollectionCard: View {
                     .foregroundStyle(accent)
                     .padding(9)
                     .frame(maxWidth: .infinity, alignment: .trailing)
+
+                glossOverlay
             }
             .clipShape(cardShape)
-            .overlay(cardShape.stroke(accent.opacity(0.95), lineWidth: 1.45))
-            .overlay(cardShape.inset(by: 3).stroke(accent.opacity(0.24), lineWidth: 0.75))
-            .shadow(color: accent.opacity(0.20), radius: 6, y: 3)
+            .overlay(cardShape.stroke(metallicBorder, lineWidth: 1.6))
+            .overlay(cardShape.inset(by: 3).stroke(accent.opacity(0.28), lineWidth: 0.75))
+            .shadow(color: accent.opacity(0.28), radius: 7, y: 3)
         }
         // 1:1 より名前欄の分だけ少し縦長。3列でも顔写真を大きく保つ。
         .aspectRatio(0.78, contentMode: .fit)
@@ -811,25 +813,70 @@ private struct PlayerCollectionCard: View {
 
     private var cardBackground: some View {
         ZStack {
+            // 明→暗→明を細かく往復させて、板金のような艶を出す
             LinearGradient(
-                colors: [
-                    Color(red: 0.93, green: 0.94, blue: 0.96),
-                    Color(red: 0.72, green: 0.76, blue: 0.82),
-                    Color(red: 0.96, green: 0.97, blue: 0.98)
+                stops: [
+                    .init(color: Color(red: 0.97, green: 0.97, blue: 0.99), location: 0.0),
+                    .init(color: Color(red: 0.76, green: 0.79, blue: 0.86), location: 0.30),
+                    .init(color: Color(red: 0.58, green: 0.62, blue: 0.71), location: 0.55),
+                    .init(color: Color(red: 0.88, green: 0.90, blue: 0.94), location: 0.78),
+                    .init(color: Color(red: 0.68, green: 0.72, blue: 0.80), location: 1.0)
                 ],
                 startPoint: .topLeading,
                 endPoint: .bottomTrailing
             )
 
+            // チームカラーの光が上から差し込むグロー
+            RadialGradient(
+                colors: [accent.opacity(0.40), accent.opacity(0.10), .clear],
+                center: .top,
+                startRadius: 0,
+                endRadius: 210
+            )
+
             LinearGradient(
-                colors: [accent.opacity(0.16), .clear, accent.opacity(0.10)],
+                colors: [accent.opacity(0.20), .clear, accent.opacity(0.14)],
                 startPoint: .topTrailing,
                 endPoint: .bottomLeading
             )
 
             CardTextureLines()
-                .opacity(0.20)
+                .opacity(0.24)
         }
+    }
+
+    /// トレカの箔のように、斜めに走る光の帯。写真や名前欄の上にも重ねて艶を出す。
+    private var glossOverlay: some View {
+        LinearGradient(
+            stops: [
+                .init(color: .white.opacity(0.0), location: 0.0),
+                .init(color: .white.opacity(0.34), location: 0.10),
+                .init(color: .white.opacity(0.05), location: 0.26),
+                .init(color: .white.opacity(0.0), location: 0.42),
+                .init(color: .white.opacity(0.14), location: 0.58),
+                .init(color: .white.opacity(0.0), location: 0.72)
+            ],
+            startPoint: .topLeading,
+            endPoint: .bottomTrailing
+        )
+        .blendMode(.screen)
+        .allowsHitTesting(false)
+    }
+
+    /// 枠線を単色ではなく、光が当たった金属フレーム風のグラデーションにする
+    private var metallicBorder: LinearGradient {
+        let bright = accent.hsbBrightness
+        return LinearGradient(
+            colors: [
+                accent.withBrightness(min(1.0, bright + 0.35)),
+                .white,
+                accent,
+                accent.withBrightness(max(0.15, bright - 0.30)),
+                accent.withBrightness(min(1.0, bright + 0.25))
+            ],
+            startPoint: .topLeading,
+            endPoint: .bottomTrailing
+        )
     }
 
     @ViewBuilder
@@ -890,29 +937,50 @@ private struct PlayerCollectionCard: View {
         .padding(.vertical, 7)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(
+            ZStack {
+                LinearGradient(
+                    colors: [Color.black.opacity(0.96), accent.opacity(0.30), Color.black.opacity(0.94)],
+                    startPoint: .leading,
+                    endPoint: .trailing
+                )
+                // 上半分にうっすら光を乗せて、黒帯にも艶を出す
+                LinearGradient(
+                    colors: [.white.opacity(0.16), .clear],
+                    startPoint: .top,
+                    endPoint: .center
+                )
+            }
+        )
+        .overlay(alignment: .top) {
             LinearGradient(
-                colors: [Color.black.opacity(0.96), accent.opacity(0.24), Color.black.opacity(0.94)],
+                colors: [accent.withBrightness(min(1.0, accent.hsbBrightness + 0.3)), accent.opacity(0.35)],
                 startPoint: .leading,
                 endPoint: .trailing
             )
-        )
-        .overlay(alignment: .top) {
-            Rectangle()
-                .fill(accent.opacity(0.55))
-                .frame(height: 1)
+            .frame(height: 1)
         }
     }
 
     private var numberBadge: some View {
-        Text(player.number.map { "#\($0)" } ?? "—")
+        let base = isNumberDuplicated ? Color.orange : (player.number == nil ? Color.gray : accent)
+        return Text(player.number.map { "#\($0)" } ?? "—")
             .font(.caption.weight(.black).monospacedDigit())
             .foregroundStyle(.white)
             .padding(.horizontal, 8)
             .padding(.vertical, 5)
             .background(
-                isNumberDuplicated ? Color.orange : (player.number == nil ? Color.gray : accent)
+                LinearGradient(
+                    colors: [
+                        base.withBrightness(min(1.0, base.hsbBrightness + 0.18)),
+                        base,
+                        base.withBrightness(max(0.10, base.hsbBrightness - 0.22))
+                    ],
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
             )
             .clipShape(CollectionNumberBadgeShape())
+            .overlay(CollectionNumberBadgeShape().stroke(.white.opacity(0.35), lineWidth: 0.6))
     }
 }
 
