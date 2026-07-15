@@ -785,6 +785,9 @@ private struct PlayerCollectionCard: View {
 
                 playerPhoto(height: photoHeight)
 
+                // 光沢は写真エリアまで。名前帯より先に描いて、黒帯が白く濁らないようにする
+                glossOverlay
+
                 VStack(spacing: 0) {
                     Spacer()
                     namePlate
@@ -792,20 +795,28 @@ private struct PlayerCollectionCard: View {
                 }
 
                 numberBadge
-                    .padding(7)
+                    .padding(5)
 
-                Image(systemName: "chart.bar.fill")
-                    .font(.caption.weight(.black))
-                    .foregroundStyle(accent)
-                    .padding(9)
+                Image(systemName: "star.fill")
+                    .font(.system(size: 13, weight: .black))
+                    .foregroundStyle(
+                        LinearGradient(
+                            colors: [
+                                accent.withBrightness(min(1.0, accent.hsbBrightness + 0.12)),
+                                accent.withBrightness(max(0.15, accent.hsbBrightness - 0.24))
+                            ],
+                            startPoint: .top,
+                            endPoint: .bottom
+                        )
+                    )
+                    .padding(8)
                     .frame(maxWidth: .infinity, alignment: .trailing)
-
-                glossOverlay
             }
             .clipShape(cardShape)
-            .overlay(cardShape.stroke(metallicBorder, lineWidth: 1.6))
-            .overlay(cardShape.inset(by: 3).stroke(accent.opacity(0.28), lineWidth: 0.75))
-            .shadow(color: accent.opacity(0.28), radius: 7, y: 3)
+            .overlay(cardShape.stroke(metallicBorder, lineWidth: 2.4))
+            .overlay(cardShape.inset(by: 2.4).stroke(.white.opacity(0.5), lineWidth: 0.8))
+            .shadow(color: .black.opacity(0.45), radius: 6, y: 4)
+            .shadow(color: accent.opacity(0.22), radius: 10, y: 2)
         }
         // 1:1 より名前欄の分だけ少し縦長。3列でも顔写真を大きく保つ。
         .aspectRatio(0.78, contentMode: .fit)
@@ -813,48 +824,46 @@ private struct PlayerCollectionCard: View {
 
     private var cardBackground: some View {
         ZStack {
-            // 明→暗→明を細かく往復させて、板金のような艶を出す
+            // モックのような明るい白銀ベース。暗い面を作らず艶は斜めストリークで出す
             LinearGradient(
                 stops: [
-                    .init(color: Color(red: 0.97, green: 0.97, blue: 0.99), location: 0.0),
-                    .init(color: Color(red: 0.76, green: 0.79, blue: 0.86), location: 0.30),
-                    .init(color: Color(red: 0.58, green: 0.62, blue: 0.71), location: 0.55),
-                    .init(color: Color(red: 0.88, green: 0.90, blue: 0.94), location: 0.78),
-                    .init(color: Color(red: 0.68, green: 0.72, blue: 0.80), location: 1.0)
+                    .init(color: Color(red: 0.99, green: 0.99, blue: 1.00), location: 0.0),
+                    .init(color: Color(red: 0.86, green: 0.88, blue: 0.91), location: 0.32),
+                    .init(color: Color(red: 0.97, green: 0.97, blue: 0.99), location: 0.55),
+                    .init(color: Color(red: 0.82, green: 0.84, blue: 0.88), location: 0.80),
+                    .init(color: Color(red: 0.93, green: 0.94, blue: 0.96), location: 1.0)
                 ],
                 startPoint: .topLeading,
                 endPoint: .bottomTrailing
             )
 
-            // チームカラーの光が上から差し込むグロー
-            RadialGradient(
-                colors: [accent.opacity(0.40), accent.opacity(0.10), .clear],
-                center: .top,
-                startRadius: 0,
-                endRadius: 210
-            )
-
-            LinearGradient(
-                colors: [accent.opacity(0.20), .clear, accent.opacity(0.14)],
-                startPoint: .topTrailing,
-                endPoint: .bottomLeading
-            )
-
             CardTextureLines()
-                .opacity(0.24)
+
+            // 枠のチームカラーが白銀面に映り込む気配(左上・右下だけ淡く)
+            RadialGradient(
+                colors: [accent.opacity(0.20), .clear],
+                center: .topLeading,
+                startRadius: 0,
+                endRadius: 130
+            )
+            RadialGradient(
+                colors: [accent.opacity(0.12), .clear],
+                center: .bottomTrailing,
+                startRadius: 0,
+                endRadius: 150
+            )
         }
     }
 
-    /// トレカの箔のように、斜めに走る光の帯。写真や名前欄の上にも重ねて艶を出す。
+    /// トレカの箔のように、左上から斜めに走る光の帯。写真エリアに艶を足す。
     private var glossOverlay: some View {
         LinearGradient(
             stops: [
-                .init(color: .white.opacity(0.0), location: 0.0),
-                .init(color: .white.opacity(0.34), location: 0.10),
-                .init(color: .white.opacity(0.05), location: 0.26),
-                .init(color: .white.opacity(0.0), location: 0.42),
-                .init(color: .white.opacity(0.14), location: 0.58),
-                .init(color: .white.opacity(0.0), location: 0.72)
+                .init(color: .white.opacity(0.50), location: 0.0),
+                .init(color: .white.opacity(0.10), location: 0.16),
+                .init(color: .white.opacity(0.0), location: 0.32),
+                .init(color: .white.opacity(0.12), location: 0.50),
+                .init(color: .white.opacity(0.0), location: 0.64)
             ],
             startPoint: .topLeading,
             endPoint: .bottomTrailing
@@ -863,16 +872,16 @@ private struct PlayerCollectionCard: View {
         .allowsHitTesting(false)
     }
 
-    /// 枠線を単色ではなく、光が当たった金属フレーム風のグラデーションにする
+    /// 深めのチームカラーでできた金属フレーム。ところどころに光の反射を入れる。
     private var metallicBorder: LinearGradient {
         let bright = accent.hsbBrightness
         return LinearGradient(
-            colors: [
-                accent.withBrightness(min(1.0, bright + 0.35)),
-                .white,
-                accent,
-                accent.withBrightness(max(0.15, bright - 0.30)),
-                accent.withBrightness(min(1.0, bright + 0.25))
+            stops: [
+                .init(color: accent.withBrightness(max(0.12, bright - 0.18)), location: 0.0),
+                .init(color: accent.withBrightness(min(1.0, bright + 0.16)), location: 0.22),
+                .init(color: accent.withBrightness(max(0.10, bright - 0.32)), location: 0.50),
+                .init(color: accent.withBrightness(min(1.0, bright + 0.10)), location: 0.76),
+                .init(color: accent.withBrightness(max(0.10, bright - 0.28)), location: 1.0)
             ],
             startPoint: .topLeading,
             endPoint: .bottomTrailing
@@ -919,45 +928,34 @@ private struct PlayerCollectionCard: View {
                 .lineLimit(1)
                 .minimumScaleFactor(0.62)
 
-            HStack(spacing: 4) {
-                Text(player.imagePath == nil ? "PHOTO REQUIRED" : "RUGBY AS")
-                    .font(.system(size: 7.5, weight: .bold, design: .rounded))
-                    .tracking(0.7)
-                    .foregroundStyle(accent)
-                    .lineLimit(1)
-
-                Spacer(minLength: 0)
-
-                Image(systemName: "chevron.right")
-                    .font(.system(size: 8, weight: .black))
-                    .foregroundStyle(.white.opacity(0.55))
-            }
+            Text(player.imagePath == nil ? "PHOTO REQUIRED" : "RUGBY AS")
+                .font(.system(size: 7.5, weight: .bold, design: .rounded))
+                .tracking(0.9)
+                .foregroundStyle(accent.withBrightness(min(1.0, accent.hsbBrightness + 0.22)))
+                .lineLimit(1)
         }
         .padding(.horizontal, 9)
         .padding(.vertical, 7)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(
+            // モックの名前帯はほぼ漆黒。チームカラーを混ぜると灰色に濁るので黒だけで作る
             ZStack {
                 LinearGradient(
-                    colors: [Color.black.opacity(0.96), accent.opacity(0.30), Color.black.opacity(0.94)],
-                    startPoint: .leading,
-                    endPoint: .trailing
+                    colors: [Color(white: 0.14), Color(white: 0.04)],
+                    startPoint: .top,
+                    endPoint: .bottom
                 )
-                // 上半分にうっすら光を乗せて、黒帯にも艶を出す
                 LinearGradient(
-                    colors: [.white.opacity(0.16), .clear],
+                    colors: [.white.opacity(0.08), .clear],
                     startPoint: .top,
                     endPoint: .center
                 )
             }
         )
         .overlay(alignment: .top) {
-            LinearGradient(
-                colors: [accent.withBrightness(min(1.0, accent.hsbBrightness + 0.3)), accent.opacity(0.35)],
-                startPoint: .leading,
-                endPoint: .trailing
-            )
-            .frame(height: 1)
+            Rectangle()
+                .fill(accent.opacity(0.45))
+                .frame(height: 0.8)
         }
     }
 
@@ -969,18 +967,19 @@ private struct PlayerCollectionCard: View {
             .padding(.horizontal, 8)
             .padding(.vertical, 5)
             .background(
+                // モックのバッジは枠より一段深い色。上端だけ光らせて沈んだ艶にする
                 LinearGradient(
                     colors: [
-                        base.withBrightness(min(1.0, base.hsbBrightness + 0.18)),
-                        base,
-                        base.withBrightness(max(0.10, base.hsbBrightness - 0.22))
+                        base.withBrightness(min(1.0, base.hsbBrightness + 0.04)),
+                        base.withBrightness(max(0.10, base.hsbBrightness - 0.16)),
+                        base.withBrightness(max(0.08, base.hsbBrightness - 0.30))
                     ],
                     startPoint: .top,
                     endPoint: .bottom
                 )
             )
             .clipShape(CollectionNumberBadgeShape())
-            .overlay(CollectionNumberBadgeShape().stroke(.white.opacity(0.35), lineWidth: 0.6))
+            .overlay(CollectionNumberBadgeShape().stroke(.white.opacity(0.28), lineWidth: 0.6))
     }
 }
 
@@ -1025,19 +1024,36 @@ private struct CollectionNumberBadgeShape: Shape {
 }
 
 private struct CardTextureLines: View {
+    /// 左下→右上の斜め線を spacing 間隔で敷き詰める共通パス
+    private func diagonalLines(in size: CGSize, spacing: CGFloat, phase: CGFloat = 0) -> Path {
+        Path { path in
+            var x: CGFloat = -size.height + phase
+            while x < size.width + size.height {
+                path.move(to: CGPoint(x: x, y: size.height))
+                path.addLine(to: CGPoint(x: x + size.height, y: 0))
+                x += spacing
+            }
+        }
+    }
+
     var body: some View {
         GeometryReader { proxy in
-            Path { path in
-                let spacing: CGFloat = 18
-                var x: CGFloat = -proxy.size.height
-                while x < proxy.size.width + proxy.size.height {
-                    path.move(to: CGPoint(x: x, y: proxy.size.height))
-                    path.addLine(to: CGPoint(x: x + proxy.size.height, y: 0))
-                    x += spacing
-                }
+            ZStack {
+                // 幅広のぼかした白帯 = ブラシ地金の「面」の艶
+                diagonalLines(in: proxy.size, spacing: 34)
+                    .stroke(Color.white.opacity(0.55), lineWidth: 9)
+                    .blur(radius: 6)
+
+                // 細い白すじ = ヘアライン
+                diagonalLines(in: proxy.size, spacing: 12)
+                    .stroke(Color.white.opacity(0.45), lineWidth: 0.7)
+
+                // ごく薄い影のすじで金属の目に深みを出す
+                diagonalLines(in: proxy.size, spacing: 21, phase: 6)
+                    .stroke(Color.black.opacity(0.07), lineWidth: 1.4)
             }
-            .stroke(Color.white, lineWidth: 0.6)
         }
+        .allowsHitTesting(false)
     }
 }
 
