@@ -152,45 +152,6 @@ struct TimelineState {
     var selectedVideoSegmentID: UUID?
 }
 
-private struct TimelineRulerContentIdentity: Hashable {
-    let durationTicks: Int
-}
-
-private struct TimelineTracksContentIdentity: Hashable {
-    let durationTicks: Int
-    let visibleTracks: [TimelineTrackType]
-    let clips: [TimelineClipContentIdentity]
-    let matchSegments: [MatchSegmentContentIdentity]
-    let videoSegments: [VideoSegmentContentIdentity]
-    let selectedClipID: UUID?
-    let selectedVideoSegmentID: UUID?
-}
-
-private struct TimelineClipContentIdentity: Hashable {
-    let id: UUID
-    let trackType: TimelineTrackType
-    let startTicks: Int
-    let endTicks: Int
-    let title: String
-    let isSelected: Bool
-}
-
-private struct MatchSegmentContentIdentity: Hashable {
-    let id: UUID
-    let halfType: String
-    let startTicks: Int
-    let endTicks: Int
-    let displayLabel: String
-}
-
-private struct VideoSegmentContentIdentity: Hashable {
-    let id: UUID
-    let sourceName: String
-    let startTicks: Int
-    let endTicks: Int
-    let fileName: String?
-}
-
 @MainActor
 final class TimelineEditorViewModel: ObservableObject {
     @Published var currentVideoTime: Double
@@ -448,6 +409,20 @@ final class TimelineEditorViewModel: ObservableObject {
         return true
     }
 
+    // 選択中のクリップを、長さを保ったまま左右へ動かす
+    @discardableResult
+    func moveSelectedClip(by delta: Double) -> Bool {
+        guard let selectedClipID,
+              let index = timelineClips.firstIndex(where: { $0.id == selectedClipID }) else { return false }
+        let length = timelineClips[index].endTime - timelineClips[index].startTime
+        let newStart = min(max(0, timelineClips[index].startTime + delta), max(0, videoDuration - length))
+        guard abs(newStart - timelineClips[index].startTime) > 0.001 else { return false }
+        saveForUndo()
+        timelineClips[index].startTime = newStart
+        timelineClips[index].endTime = newStart + length
+        return true
+    }
+
     @discardableResult
     func adjustSelectedClipStart(to newStart: Double) -> Bool {
         guard let selectedClipID,
@@ -539,8 +514,10 @@ struct TimelineEditorView: View {
     @State private var activeVideoSegmentID: UUID?
     @State private var playbackTimeObserver: Any?
     @State private var videoEndObserver: NSObjectProtocol?
-    @State private var timelineScrollOffset: CGFloat = 0
     @State private var isScrubbingTimeline = false
+    // スクラブ(指でのシーク)中は、動画へのシーク要求を間引いて軽くする
+    @State private var pendingScrubSeekTime: Double?
+    @State private var isScrubSeekInFlight = false
     @State private var isMatchClockSettingsPresented = false
     @State private var isHighlightExportPresented = false
     @State private var matchClockSettings: TimelineMatchClockSettings = .standard
@@ -675,14 +652,10 @@ struct TimelineEditorView: View {
 
                     TimelineTracksView(
                         viewModel: viewModel,
-                        timelineScrollOffset: $timelineScrollOffset,
                         isScrubbingTimeline: $isScrubbingTimeline,
                         selectedPlaybackTrack: selectedPlaybackTrack,
                         onSelectVideoSegment: { segment in
                             selectVideoSegment(segment, autoplay: false)
-                        },
-                        onAddClipForTrack: { trackType in
-                            handleToolTap(trackType)
                         },
                         onTrackLabelTap: { trackType in
                             toggleSequentialPlayback(for: trackType)
@@ -692,6 +665,9 @@ struct TimelineEditorView: View {
                         },
                         onAdjustSelectedEnd: { delta in
                             adjustSelectedClipEnd(by: delta)
+                        },
+                        onMoveSelected: { delta in
+                            moveSelectedClip(by: delta)
                         },
                         onTimelineTimeChanged: { time in
                             scrubTimeline(to: time)
@@ -737,6 +713,12 @@ struct TimelineEditorView: View {
         }
         .onChange(of: selectedVideoItems) { _, items in
             importSelectedVideos(items)
+        }
+        .onChange(of: isScrubbingTimeline) { _, isScrubbing in
+            // 指を離した瞬間に1回だけ、正確な位置へシークし直す
+            guard !isScrubbing else { return }
+            pendingScrubSeekTime = nil
+            seekPlayerToCurrentTime(selectingSegmentAtCurrentTime: true)
         }
         .sheet(isPresented: $isMatchClockSettingsPresented) {
             if let match {
@@ -1035,6 +1017,11 @@ struct TimelineEditorView: View {
 
     private func adjustSelectedClipEnd(by delta: Double) {
         guard viewModel.adjustSelectedClipEnd(by: delta) else { return }
+        saveSelectedClipToEvent()
+    }
+
+    private func moveSelectedClip(by delta: Double) {
+        guard viewModel.moveSelectedClip(by: delta) else { return }
         saveSelectedClipToEvent()
     }
 
@@ -1353,7 +1340,7 @@ struct TimelineEditorView: View {
 
     private func scrubTimeline(to time: Double) {
         let clampedTime = min(max(0, time), viewModel.videoDuration)
-        guard abs(viewModel.currentVideoTime - clampedTime) > 0.05 else { return }
+        guard abs(viewModel.currentVideoTime - clampedTime) > 0.03 else { return }
 
         // 指でスクラブしたら連続再生モードは解除して通常操作に戻す
         clearSequentialPlayback()
@@ -1361,7 +1348,49 @@ struct TimelineEditorView: View {
         viewModel.currentVideoTime = clampedTime
         videoPlayer?.pause()
         viewModel.isPlaying = false
-        seekPlayerToCurrentTime(selectingSegmentAtCurrentTime: true)
+
+        if isScrubbingTimeline {
+            // スクラブ中: 粗い精度のシークを直列に間引いて発行する。
+            // 毎フレーム誤差ゼロシークを発行すると詰まってカクつくため。
+            requestScrubSeek(to: clampedTime)
+        } else {
+            // タップ等の単発移動は即・正確にシーク
+            seekPlayerToCurrentTime(selectingSegmentAtCurrentTime: true)
+        }
+    }
+
+    // 「最後に要求された時刻」だけを覚えておき、前のシークが終わってから次を出す
+    private func requestScrubSeek(to time: Double) {
+        pendingScrubSeekTime = time
+        performPendingScrubSeek()
+    }
+
+    private func performPendingScrubSeek() {
+        guard !isScrubSeekInFlight, let target = pendingScrubSeekTime else { return }
+        guard let segment = playableVideoSegment(at: target) else { return }
+
+        if activeVideoSegmentID != segment.id || videoPlayer == nil {
+            pendingScrubSeekTime = nil
+            viewModel.selectVideoSegment(segment.id)
+            configurePlayer(for: segment, autoplay: false)
+            return
+        }
+
+        guard let player = videoPlayer else { return }
+        pendingScrubSeekTime = nil
+        isScrubSeekInFlight = true
+        let localTime = min(max(0, target - segment.startTime), max(0, segment.endTime - segment.startTime))
+        let tolerance = CMTime(seconds: 0.3, preferredTimescale: 600)
+        player.seek(
+            to: CMTime(seconds: localTime, preferredTimescale: 600),
+            toleranceBefore: tolerance,
+            toleranceAfter: tolerance
+        ) { _ in
+            Task { @MainActor in
+                isScrubSeekInFlight = false
+                performPendingScrubSeek()
+            }
+        }
     }
 
     // ===== トラック連続再生 =====
@@ -1769,108 +1798,57 @@ struct PlaybackControlBar: View {
     }
 }
 
-struct TimelineRulerView: View {
-    var duration: Double
+// MARK: - タイムライン描画(Canvas 1枚 + 物理スクロール)
+//
+// 仕組み(重くしないための設計):
+// - 横スクロールは「中身が空の UIScrollView」を物理エンジンとしてだけ使う。
+//   慣性・バウンドはネイティブのまま、位置(offset)だけを受け取る。
+// - 見た目は、見えている範囲だけを Canvas に毎回描く。クリップを1つずつ
+//   ビューにしない → クリップが何百個あっても描画コストがほぼ一定。
+// - 再生ヘッドは画面中央に固定し、スクロール位置 = 再生時刻。
+// - ピンチで拡大縮小(再生ヘッド中心)。選択クリップは掴んで移動・両端で伸縮。
 
-    var body: some View {
-        GeometryReader { proxy in
-            let width = max(1, proxy.size.width)
-            let minuteCount = max(1, Int(duration / 60))
+private enum ClipDragMode {
+    case move
+    case start
+    case end
+}
 
-            ZStack(alignment: .leading) {
-                Rectangle()
-                    .fill(Color.white.opacity(0.035))
+private struct ClipDragPreview: Equatable {
+    var mode: ClipDragMode?
+    var delta: Double
 
-                ForEach(0...minuteCount, id: \.self) { minute in
-                    let isMajor = minute % 5 == 0
-                    let x = min(width, width * CGFloat(Double(minute * 60) / duration))
-
-                    Rectangle()
-                        .fill(Color.white.opacity(isMajor ? 0.42 : 0.20))
-                        .frame(width: isMajor ? 1.2 : 1, height: isMajor ? 34 : 18)
-                        .position(x: x, y: isMajor ? 28 : 36)
-
-                    if isMajor {
-                        Text(TimelineTimeFormat.rulerMinute(minute))
-                            .font(.system(size: 13, weight: .semibold, design: .rounded))
-                            .foregroundStyle(Color.white.opacity(0.70))
-                            .monospacedDigit()
-                            .position(x: min(max(26, x), width - 28), y: 11)
-                    }
-                }
-            }
-        }
-    }
+    static let inactive = ClipDragPreview(mode: nil, delta: 0)
 }
 
 struct TimelineTracksView: View {
     @ObservedObject var viewModel: TimelineEditorViewModel
-    @Binding var timelineScrollOffset: CGFloat
     @Binding var isScrubbingTimeline: Bool
     var selectedPlaybackTrack: TimelineTrackType?
     var onSelectVideoSegment: (VideoSegment) -> Void
-    var onAddClipForTrack: (TimelineTrackType) -> Void
     var onTrackLabelTap: (TimelineTrackType) -> Void
     var onAdjustSelectedStart: (Double) -> Void
     var onAdjustSelectedEnd: (Double) -> Void
+    var onMoveSelected: (Double) -> Void
     var onTimelineTimeChanged: (Double) -> Void
 
     private let labelWidth: CGFloat = 110
     private let rulerHeight: CGFloat = 42
     private let rowHeight: CGFloat = 48
 
-    private var rulerContentIdentity: AnyHashable {
-        AnyHashable(TimelineRulerContentIdentity(durationTicks: Self.timeTicks(viewModel.videoDuration)))
-    }
-
-    private var tracksContentIdentity: AnyHashable {
-        AnyHashable(
-            TimelineTracksContentIdentity(
-                durationTicks: Self.timeTicks(viewModel.videoDuration),
-                visibleTracks: viewModel.visibleTracks,
-                clips: viewModel.timelineClips.map { clip in
-                    TimelineClipContentIdentity(
-                        id: clip.id,
-                        trackType: clip.trackType,
-                        startTicks: Self.timeTicks(clip.startTime),
-                        endTicks: Self.timeTicks(clip.endTime),
-                        title: clip.title,
-                        isSelected: clip.isSelected
-                    )
-                },
-                matchSegments: viewModel.matchSegments.map { segment in
-                    MatchSegmentContentIdentity(
-                        id: segment.id,
-                        halfType: segment.halfType.rawValue,
-                        startTicks: Self.timeTicks(segment.startTime),
-                        endTicks: Self.timeTicks(segment.endTime),
-                        displayLabel: segment.displayLabel
-                    )
-                },
-                videoSegments: viewModel.videoSegments.map { segment in
-                    VideoSegmentContentIdentity(
-                        id: segment.id,
-                        sourceName: segment.sourceName,
-                        startTicks: Self.timeTicks(segment.startTime),
-                        endTicks: Self.timeTicks(segment.endTime),
-                        fileName: segment.fileName
-                    )
-                },
-                selectedClipID: viewModel.selectedClipID,
-                selectedVideoSegmentID: viewModel.selectedVideoSegmentID
-            )
-        )
-    }
+    // 横スクロール位置と拡大率は、このビューの中で完結させる
+    @State private var scrollOffset: CGFloat = 0
+    @State private var pixelsPerSecond: CGFloat = 1.55
+    @State private var pinchBasePPS: CGFloat?
+    @State private var pinchFocusTime: Double = 0
+    @State private var dragPreview: ClipDragPreview = .inactive
 
     var body: some View {
         GeometryReader { proxy in
-            let timelineViewportWidth = max(1, proxy.size.width - labelWidth)
-            let timelineCanvasWidth = max(timelineViewportWidth, CGFloat(viewModel.videoDuration) * 1.55)
-            let fixedPlayheadX = proxy.size.width / 2
-            let playheadTimelineX = max(0, fixedPlayheadX - labelWidth)
-            let leadingInset = playheadTimelineX
-            let trailingInset = max(0, timelineViewportWidth - playheadTimelineX)
-            let scrollableContentWidth = leadingInset + timelineCanvasWidth + trailingInset
+            let viewportWidth = max(1, proxy.size.width - labelWidth)
+            let playheadX = proxy.size.width / 2
+            let leadingInset = max(0, playheadX - labelWidth)
+            let contentWidth = CGFloat(viewModel.videoDuration) * pixelsPerSecond + viewportWidth
             let rowsHeight = CGFloat(viewModel.visibleTracks.count) * rowHeight
 
             ZStack(alignment: .topLeading) {
@@ -1882,27 +1860,33 @@ struct TimelineTracksView: View {
                     )
 
                 VStack(spacing: 0) {
+                    // 目盛り(上部に固定・タップでその時刻へ移動)
                     HStack(spacing: 0) {
-                        Color.clear
-                            .frame(width: labelWidth, height: rulerHeight)
+                        Color.clear.frame(width: labelWidth, height: rulerHeight)
 
-                        TimelineHorizontalOffsetScrollView(
-                            offset: $timelineScrollOffset,
-                            isTracking: $isScrubbingTimeline,
-                            contentWidth: scrollableContentWidth,
-                            contentIdentity: rulerContentIdentity,
-                            showsIndicators: false
-                        ) {
-                            HStack(spacing: 0) {
-                                Color.clear.frame(width: leadingInset)
-                                TimelineRulerView(duration: viewModel.videoDuration)
-                                    .frame(width: timelineCanvasWidth, height: rulerHeight)
-                                Color.clear.frame(width: trailingInset)
-                            }
+                        ZStack(alignment: .topLeading) {
+                            TimelineScrollPhysicsView(
+                                offset: $scrollOffset,
+                                isTracking: $isScrubbingTimeline,
+                                contentWidth: contentWidth,
+                                onTap: { point in
+                                    jumpToTapped(contentX: point.x, leadingInset: leadingInset)
+                                }
+                            )
+
+                            TimelineRulerCanvas(
+                                duration: viewModel.videoDuration,
+                                pixelsPerSecond: pixelsPerSecond,
+                                offset: scrollOffset,
+                                leadingInset: leadingInset
+                            )
+                            .allowsHitTesting(false)
                         }
-                        .frame(width: timelineViewportWidth, height: rulerHeight)
+                        .frame(width: viewportWidth, height: rulerHeight)
+                        .clipped()
                     }
 
+                    // トラック(縦にスクロール可)
                     ScrollView(.vertical, showsIndicators: false) {
                         HStack(spacing: 0) {
                             VStack(spacing: 0) {
@@ -1923,67 +1907,58 @@ struct TimelineTracksView: View {
                                 }
                             }
 
-                            TimelineHorizontalOffsetScrollView(
-                                offset: $timelineScrollOffset,
-                                isTracking: $isScrubbingTimeline,
-                                contentWidth: scrollableContentWidth,
-                                contentIdentity: tracksContentIdentity,
-                                showsIndicators: true
-                            ) {
-                                HStack(spacing: 0) {
-                                    Color.clear.frame(width: leadingInset)
-                                    VStack(spacing: 0) {
-                                        ForEach(viewModel.visibleTracks) { trackType in
-                                            TimelineTrackRowView(
-                                                trackType: trackType,
-                                                duration: viewModel.videoDuration,
-                                                rowHeight: rowHeight,
-                                                clips: viewModel.timelineClips.filter { $0.trackType == trackType },
-                                                matchSegments: viewModel.matchSegments,
-                                                videoSegments: viewModel.videoSegments,
-                                                selectedClipID: viewModel.selectedClipID,
-                                                selectedVideoSegmentID: viewModel.selectedVideoSegmentID,
-                                                showsLabel: false,
-                                                onSelectClip: { clipID in
-                                                    viewModel.selectClip(clipID)
-                                                },
-                                                onSelectVideoSegment: { segment in
-                                                    onSelectVideoSegment(segment)
-                                                },
-                                                onRowTap: { rowTrackType in
-                                                    if viewModel.selectedTool == rowTrackType {
-                                                        onAddClipForTrack(rowTrackType)
-                                                    }
-                                                },
-                                                onAdjustSelectedStart: { delta in
-                                                    onAdjustSelectedStart(delta)
-                                                },
-                                                onAdjustSelectedEnd: { delta in
-                                                    onAdjustSelectedEnd(delta)
-                                                }
-                                            )
-                                            .frame(width: timelineCanvasWidth, height: rowHeight)
-                                        }
+                            ZStack(alignment: .topLeading) {
+                                TimelineScrollPhysicsView(
+                                    offset: $scrollOffset,
+                                    isTracking: $isScrubbingTimeline,
+                                    contentWidth: contentWidth,
+                                    onTap: { point in
+                                        handleRowsTap(contentPoint: point, leadingInset: leadingInset)
+                                    },
+                                    onPinchBegan: {
+                                        pinchBasePPS = pixelsPerSecond
+                                        pinchFocusTime = viewModel.currentVideoTime
+                                    },
+                                    onPinchChanged: { scale in
+                                        guard let base = pinchBasePPS else { return }
+                                        pixelsPerSecond = min(max(base * scale, 0.5), 10)
+                                        scrollOffset = CGFloat(pinchFocusTime) * pixelsPerSecond
+                                    },
+                                    onPinchEnded: {
+                                        pinchBasePPS = nil
                                     }
-                                    .frame(width: timelineCanvasWidth, height: rowsHeight)
-                                    Color.clear.frame(width: trailingInset)
-                                }
+                                )
+
+                                TimelineRowsCanvas(
+                                    tracks: viewModel.visibleTracks,
+                                    rowHeight: rowHeight,
+                                    duration: viewModel.videoDuration,
+                                    pixelsPerSecond: pixelsPerSecond,
+                                    offset: scrollOffset,
+                                    leadingInset: leadingInset,
+                                    clips: viewModel.timelineClips,
+                                    matchSegments: viewModel.matchSegments,
+                                    videoSegments: viewModel.videoSegments,
+                                    selectedClipID: viewModel.selectedClipID,
+                                    selectedVideoSegmentID: viewModel.selectedVideoSegmentID,
+                                    playbackTrack: selectedPlaybackTrack,
+                                    dragPreview: dragPreview
+                                )
+                                .allowsHitTesting(false)
+
+                                selectedClipOverlay(leadingInset: leadingInset, viewportWidth: viewportWidth)
                             }
-                            .frame(width: timelineViewportWidth, height: rowsHeight)
+                            .frame(width: viewportWidth, height: rowsHeight)
+                            .clipped()
                         }
                     }
                 }
                 .clipShape(RoundedRectangle(cornerRadius: 18))
 
                 Rectangle()
-                    .fill(Color.blue.opacity(0.70))
-                    .frame(width: 1)
-                    .position(x: labelWidth, y: proxy.size.height / 2)
-
-                Rectangle()
                     .fill(Color.white.opacity(0.10))
                     .frame(width: 1)
-                    .position(x: fixedPlayheadX, y: proxy.size.height / 2)
+                    .position(x: labelWidth, y: proxy.size.height / 2)
                     .allowsHitTesting(false)
 
                 if viewModel.videoSegments.isEmpty {
@@ -1992,11 +1967,12 @@ struct TimelineTracksView: View {
                         .foregroundStyle(Color.white.opacity(0.36))
                         .lineLimit(1)
                         .minimumScaleFactor(0.7)
-                        .frame(width: timelineViewportWidth - 24)
-                        .position(x: labelWidth + timelineViewportWidth / 2, y: rulerHeight + rowHeight / 2)
+                        .frame(width: viewportWidth - 24)
+                        .position(x: labelWidth + viewportWidth / 2, y: rulerHeight + rowHeight / 2)
                         .allowsHitTesting(false)
                 }
 
+                // 再生ヘッド(中央固定)
                 VStack(spacing: 0) {
                     Circle()
                         .fill(Color.white)
@@ -2007,73 +1983,150 @@ struct TimelineTracksView: View {
                         .frame(width: 2)
                 }
                 .frame(height: proxy.size.height - 12)
-                .position(x: fixedPlayheadX, y: proxy.size.height / 2 + 6)
+                .position(x: playheadX, y: proxy.size.height / 2 + 6)
                 .allowsHitTesting(false)
             }
             .onAppear {
-                timelineScrollOffset = offset(
-                    for: viewModel.currentVideoTime,
-                    duration: viewModel.videoDuration,
-                    timelineCanvasWidth: timelineCanvasWidth,
-                    scrollableContentWidth: scrollableContentWidth,
-                    timelineViewportWidth: timelineViewportWidth
-                )
+                scrollOffset = CGFloat(viewModel.currentVideoTime) * pixelsPerSecond
             }
             .onChange(of: viewModel.currentVideoTime) { _, newTime in
-                guard !isScrubbingTimeline else { return }
-                timelineScrollOffset = offset(
-                    for: newTime,
-                    duration: viewModel.videoDuration,
-                    timelineCanvasWidth: timelineCanvasWidth,
-                    scrollableContentWidth: scrollableContentWidth,
-                    timelineViewportWidth: timelineViewportWidth
-                )
+                guard !isScrubbingTimeline, pinchBasePPS == nil else { return }
+                scrollOffset = CGFloat(newTime) * pixelsPerSecond
             }
-            .onChange(of: timelineScrollOffset) { _, newOffset in
+            .onChange(of: scrollOffset) { _, newOffset in
                 guard isScrubbingTimeline else { return }
-                onTimelineTimeChanged(
-                    time(
-                        for: newOffset,
-                        duration: viewModel.videoDuration,
-                        timelineCanvasWidth: timelineCanvasWidth
-                    )
-                )
+                onTimelineTimeChanged(Double(newOffset / max(1, pixelsPerSecond)))
             }
         }
     }
 
-    private func offset(
-        for time: Double,
-        duration: Double,
-        timelineCanvasWidth: CGFloat,
-        scrollableContentWidth: CGFloat,
-        timelineViewportWidth: CGFloat
-    ) -> CGFloat {
-        let rawOffset = CGFloat(min(max(0, time), duration) / max(1, duration)) * timelineCanvasWidth
-        let maxOffset = max(0, scrollableContentWidth - timelineViewportWidth)
-        return min(max(0, rawOffset), maxOffset)
+    // MARK: 選択クリップの操作レイヤー(移動・伸縮)
+
+    @ViewBuilder
+    private func selectedClipOverlay(leadingInset: CGFloat, viewportWidth: CGFloat) -> some View {
+        if let clip = viewModel.clip(id: viewModel.selectedClipID),
+           let rowIndex = viewModel.visibleTracks.firstIndex(of: clip.trackType) {
+            let times = previewedTimes(for: clip)
+            let x = leadingInset + CGFloat(times.start) * pixelsPerSecond - scrollOffset
+            let width = max(28, CGFloat(times.end - times.start) * pixelsPerSecond)
+            let y = CGFloat(rowIndex) * rowHeight
+
+            if x + width > -60, x < viewportWidth + 60 {
+                // 本体: 掴んで左右へ移動
+                Color.clear
+                    .frame(width: width, height: rowHeight - 14)
+                    .contentShape(RoundedRectangle(cornerRadius: 6))
+                    .position(x: x + width / 2, y: y + rowHeight / 2)
+                    .gesture(dragGesture(mode: .move))
+
+                // 両端: 伸縮ハンドル
+                TimelineClipResizeHandle()
+                    .frame(width: 34, height: rowHeight)
+                    .contentShape(Rectangle())
+                    .position(x: x, y: y + rowHeight / 2)
+                    .gesture(dragGesture(mode: .start))
+
+                TimelineClipResizeHandle()
+                    .frame(width: 34, height: rowHeight)
+                    .contentShape(Rectangle())
+                    .position(x: x + width, y: y + rowHeight / 2)
+                    .gesture(dragGesture(mode: .end))
+            }
+        }
     }
 
-    private func time(for offset: CGFloat, duration: Double, timelineCanvasWidth: CGFloat) -> Double {
-        let progress = Double(min(max(0, offset), timelineCanvasWidth) / max(1, timelineCanvasWidth))
-        return min(max(0, progress * duration), duration)
+    private func dragGesture(mode: ClipDragMode) -> some Gesture {
+        DragGesture(minimumDistance: 2, coordinateSpace: .global)
+            .onChanged { value in
+                dragPreview = ClipDragPreview(
+                    mode: mode,
+                    delta: Double(value.translation.width / max(1, pixelsPerSecond))
+                )
+            }
+            .onEnded { value in
+                let delta = Double(value.translation.width / max(1, pixelsPerSecond))
+                dragPreview = .inactive
+                switch mode {
+                case .move: onMoveSelected(delta)
+                case .start: onAdjustSelectedStart(delta)
+                case .end: onAdjustSelectedEnd(delta)
+                }
+            }
     }
 
-    private static func timeTicks(_ seconds: Double) -> Int {
-        Int((seconds * 10).rounded())
+    private func previewedTimes(for clip: TimelineClip) -> (start: Double, end: Double) {
+        var start = clip.startTime
+        var end = clip.endTime
+
+        switch dragPreview.mode {
+        case .move:
+            let length = end - start
+            start = min(max(0, start + dragPreview.delta), max(0, viewModel.videoDuration - length))
+            end = start + length
+        case .start:
+            start = min(max(0, start + dragPreview.delta), end - 1)
+        case .end:
+            end = max(min(viewModel.videoDuration, end + dragPreview.delta), start + 1)
+        case nil:
+            break
+        }
+
+        return (start, end)
+    }
+
+    // MARK: タップの解釈
+
+    private func jumpToTapped(contentX: CGFloat, leadingInset: CGFloat) {
+        let time = min(max(0, Double((contentX - leadingInset) / max(1, pixelsPerSecond))), viewModel.videoDuration)
+        scrollOffset = CGFloat(time) * pixelsPerSecond
+        onTimelineTimeChanged(time)
+    }
+
+    private func handleRowsTap(contentPoint: CGPoint, leadingInset: CGFloat) {
+        let rowIndex = Int(contentPoint.y / rowHeight)
+        guard rowIndex >= 0, rowIndex < viewModel.visibleTracks.count else { return }
+        let trackType = viewModel.visibleTracks[rowIndex]
+        let time = Double((contentPoint.x - leadingInset) / max(1, pixelsPerSecond))
+        // 細いクリップも拾えるよう、±10pt ぶんの遊びを持たせる
+        let slop = Double(10 / max(1, pixelsPerSecond))
+
+        switch trackType {
+        case .video:
+            if let segment = viewModel.videoSegments.first(where: {
+                $0.startTime - slop <= time && time <= $0.endTime + slop
+            }) {
+                onSelectVideoSegment(segment)
+            }
+        case .match, .deleteTool:
+            viewModel.selectClip(nil)
+        default:
+            let candidates = viewModel.timelineClips.filter {
+                $0.trackType == trackType && $0.startTime - slop <= time && time <= $0.endTime + slop
+            }
+            if let hit = candidates.min(by: {
+                abs((($0.startTime + $0.endTime) / 2) - time) < abs((($1.startTime + $1.endTime) / 2) - time)
+            }) {
+                viewModel.selectClip(hit.id)
+            } else {
+                viewModel.selectClip(nil)
+            }
+        }
     }
 }
 
-private struct TimelineHorizontalOffsetScrollView<Content: View>: UIViewRepresentable {
+// MARK: - 物理エンジンとしての空スクロールビュー
+
+private struct TimelineScrollPhysicsView: UIViewRepresentable {
     @Binding var offset: CGFloat
     @Binding var isTracking: Bool
     var contentWidth: CGFloat
-    var contentIdentity: AnyHashable = 0
-    var showsIndicators: Bool
-    @ViewBuilder var content: Content
+    var onTap: ((CGPoint) -> Void)? = nil
+    var onPinchBegan: (() -> Void)? = nil
+    var onPinchChanged: ((CGFloat) -> Void)? = nil
+    var onPinchEnded: (() -> Void)? = nil
 
     func makeCoordinator() -> Coordinator {
-        Coordinator(offset: $offset, isTracking: $isTracking)
+        Coordinator(self)
     }
 
     func makeUIView(context: Context) -> UIScrollView {
@@ -2081,49 +2134,33 @@ private struct TimelineHorizontalOffsetScrollView<Content: View>: UIViewRepresen
         scrollView.delegate = context.coordinator
         scrollView.backgroundColor = .clear
         scrollView.contentInsetAdjustmentBehavior = .never
-        scrollView.showsHorizontalScrollIndicator = showsIndicators
+        scrollView.showsHorizontalScrollIndicator = false
         scrollView.showsVerticalScrollIndicator = false
         scrollView.alwaysBounceHorizontal = true
         scrollView.alwaysBounceVertical = false
-        scrollView.bounces = true
-        scrollView.delaysContentTouches = false
 
-        let host = UIHostingController(rootView: hostedContent)
-        host.view.backgroundColor = .clear
-        host.view.translatesAutoresizingMaskIntoConstraints = false
-        scrollView.addSubview(host.view)
-
-        let widthConstraint = host.view.widthAnchor.constraint(equalToConstant: contentWidth)
-        NSLayoutConstraint.activate([
-            host.view.leadingAnchor.constraint(equalTo: scrollView.contentLayoutGuide.leadingAnchor),
-            host.view.trailingAnchor.constraint(equalTo: scrollView.contentLayoutGuide.trailingAnchor),
-            host.view.topAnchor.constraint(equalTo: scrollView.contentLayoutGuide.topAnchor),
-            host.view.bottomAnchor.constraint(equalTo: scrollView.contentLayoutGuide.bottomAnchor),
-            host.view.heightAnchor.constraint(equalTo: scrollView.frameLayoutGuide.heightAnchor),
-            widthConstraint
-        ])
-
-        context.coordinator.host = host
-        context.coordinator.widthConstraint = widthConstraint
-        context.coordinator.lastHostedContentKey = hostedContentKey
+        if onTap != nil {
+            let tap = UITapGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.handleTap(_:)))
+            tap.cancelsTouchesInView = false
+            scrollView.addGestureRecognizer(tap)
+        }
+        if onPinchChanged != nil {
+            let pinch = UIPinchGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.handlePinch(_:)))
+            scrollView.addGestureRecognizer(pinch)
+        }
         return scrollView
     }
 
     func updateUIView(_ scrollView: UIScrollView, context: Context) {
-        // この中で setContentOffset 等を行うと delegate が同期的に呼ばれる。
-        // 「SwiftUIの画面更新中に状態を変更」する警告(未定義動作)を防ぐため、
-        // 更新中フラグを立てて delegate 側の状態書き込みを遅延させる。
+        context.coordinator.parent = self
+        // setContentOffset は delegate を同期的に呼ぶ。SwiftUI の画面更新中に
+        // 状態を書き戻さないよう、フラグを立てて delegate 側で遅延させる。
         context.coordinator.isPerformingViewUpdate = true
         defer { context.coordinator.isPerformingViewUpdate = false }
 
-        let contentKey = hostedContentKey
-        if context.coordinator.lastHostedContentKey != contentKey {
-            context.coordinator.host?.rootView = hostedContent
-            context.coordinator.lastHostedContentKey = contentKey
+        if abs(scrollView.contentSize.width - contentWidth) > 0.5 {
+            scrollView.contentSize = CGSize(width: contentWidth, height: 1)
         }
-        context.coordinator.widthConstraint?.constant = contentWidth
-        scrollView.showsHorizontalScrollIndicator = showsIndicators
-        scrollView.alwaysBounceHorizontal = contentWidth > scrollView.bounds.width
 
         let maxOffset = max(0, contentWidth - scrollView.bounds.width)
         let clampedOffset = min(max(0, offset), maxOffset)
@@ -2132,35 +2169,12 @@ private struct TimelineHorizontalOffsetScrollView<Content: View>: UIViewRepresen
         }
     }
 
-    private var hostedContent: AnyView {
-        AnyView(content.frame(width: contentWidth))
-    }
-
-    private var hostedContentKey: HostedContentKey {
-        HostedContentKey(
-            identity: contentIdentity,
-            contentWidth: Int(max(1, contentWidth).rounded())
-        )
-    }
-
-    struct HostedContentKey: Equatable {
-        let identity: AnyHashable
-        let contentWidth: Int
-    }
-
     final class Coordinator: NSObject, UIScrollViewDelegate {
-        @Binding var offset: CGFloat
-        @Binding var isTracking: Bool
-        var host: UIHostingController<AnyView>?
-        var widthConstraint: NSLayoutConstraint?
-        var lastHostedContentKey: HostedContentKey?
-        // updateUIView 実行中(=SwiftUIの画面更新中)は true。
-        // この間の状態書き込みは次のタイミングへ遅らせる。
+        var parent: TimelineScrollPhysicsView
         var isPerformingViewUpdate = false
 
-        init(offset: Binding<CGFloat>, isTracking: Binding<Bool>) {
-            _offset = offset
-            _isTracking = isTracking
+        init(_ parent: TimelineScrollPhysicsView) {
+            self.parent = parent
         }
 
         func scrollViewWillBeginDragging(_ scrollView: UIScrollView) {
@@ -2168,13 +2182,13 @@ private struct TimelineHorizontalOffsetScrollView<Content: View>: UIViewRepresen
         }
 
         func scrollViewDidScroll(_ scrollView: UIScrollView) {
+            let x = scrollView.contentOffset.x
             if isPerformingViewUpdate {
-                DispatchQueue.main.async { [weak self, weak scrollView] in
-                    guard let self, let scrollView else { return }
-                    self.offset = scrollView.contentOffset.x
+                DispatchQueue.main.async { [weak self] in
+                    self?.parent.offset = x
                 }
             } else {
-                offset = scrollView.contentOffset.x
+                parent.offset = x
             }
         }
 
@@ -2191,301 +2205,347 @@ private struct TimelineHorizontalOffsetScrollView<Content: View>: UIViewRepresen
         private func setIsTracking(_ value: Bool) {
             if isPerformingViewUpdate {
                 DispatchQueue.main.async { [weak self] in
-                    self?.isTracking = value
+                    self?.parent.isTracking = value
                 }
             } else {
-                isTracking = value
+                parent.isTracking = value
+            }
+        }
+
+        @objc func handleTap(_ recognizer: UITapGestureRecognizer) {
+            guard let scrollView = recognizer.view as? UIScrollView else { return }
+            parent.onTap?(recognizer.location(in: scrollView))
+        }
+
+        @objc func handlePinch(_ recognizer: UIPinchGestureRecognizer) {
+            guard let scrollView = recognizer.view as? UIScrollView else { return }
+            switch recognizer.state {
+            case .began:
+                // ピンチ中は横スクロールを止めて、拡大縮小に専念させる
+                scrollView.isScrollEnabled = false
+                parent.onPinchBegan?()
+            case .changed:
+                parent.onPinchChanged?(recognizer.scale)
+            default:
+                scrollView.isScrollEnabled = true
+                parent.onPinchEnded?()
             }
         }
     }
 }
 
-struct TimelineTrackRowView: View {
-    var trackType: TimelineTrackType
+// MARK: - 目盛りの描画
+
+private struct TimelineRulerCanvas: View {
     var duration: Double
+    var pixelsPerSecond: CGFloat
+    var offset: CGFloat
+    var leadingInset: CGFloat
+
+    var body: some View {
+        Canvas { context, size in
+            context.fill(
+                Path(CGRect(origin: .zero, size: size)),
+                with: .color(Color.white.opacity(0.035))
+            )
+
+            let pps = max(0.1, pixelsPerSecond)
+            func xFor(_ t: Double) -> CGFloat { leadingInset + CGFloat(t) * pps - offset }
+
+            let visibleStart = max(0, Double((offset - leadingInset) / pps))
+            let visibleEnd = min(duration, Double((offset - leadingInset + size.width) / pps) + 1)
+            guard visibleEnd > visibleStart else { return }
+
+            // ラベルを付ける間隔(分)は、詰まらない最小の間隔をズームから選ぶ
+            let stepCandidates = [1, 2, 5, 10, 15, 30]
+            let labelStep = stepCandidates.first(where: { CGFloat($0) * 60 * pps >= 64 }) ?? 30
+
+            let firstMinute = max(0, Int(visibleStart / 60))
+            let lastMinute = Int(visibleEnd / 60) + 1
+            if lastMinute >= firstMinute {
+                for minute in firstMinute...lastMinute {
+                    let t = Double(minute * 60)
+                    if t > duration + 0.5 { break }
+                    let x = xFor(t)
+                    let isLabeled = minute % labelStep == 0
+
+                    var tick = Path()
+                    tick.move(to: CGPoint(x: x, y: size.height))
+                    tick.addLine(to: CGPoint(x: x, y: size.height - (isLabeled ? 16 : 9)))
+                    context.stroke(tick, with: .color(Color.white.opacity(isLabeled ? 0.42 : 0.20)), lineWidth: 1)
+
+                    if isLabeled {
+                        context.draw(
+                            Text(TimelineTimeFormat.rulerMinute(minute))
+                                .font(.system(size: 12, weight: .semibold, design: .rounded))
+                                .foregroundStyle(Color.white.opacity(0.72)),
+                            at: CGPoint(x: x, y: 12)
+                        )
+                    }
+                }
+            }
+
+            // 拡大しているときは10秒の小目盛りも足す
+            if pps >= 3 {
+                let firstTick = max(0, Int(visibleStart / 10))
+                let lastTick = Int(visibleEnd / 10) + 1
+                if lastTick >= firstTick {
+                    for tickIndex in firstTick...lastTick where tickIndex % 6 != 0 {
+                        let t = Double(tickIndex * 10)
+                        if t > duration { break }
+                        var tick = Path()
+                        tick.move(to: CGPoint(x: xFor(t), y: size.height))
+                        tick.addLine(to: CGPoint(x: xFor(t), y: size.height - 5))
+                        context.stroke(tick, with: .color(Color.white.opacity(0.14)), lineWidth: 1)
+                    }
+                }
+            }
+        }
+    }
+}
+
+// MARK: - トラックの描画(全クリップを1枚に描く)
+
+private struct TimelineRowsCanvas: View {
+    var tracks: [TimelineTrackType]
     var rowHeight: CGFloat
+    var duration: Double
+    var pixelsPerSecond: CGFloat
+    var offset: CGFloat
+    var leadingInset: CGFloat
     var clips: [TimelineClip]
     var matchSegments: [MatchSegment]
     var videoSegments: [VideoSegment]
     var selectedClipID: UUID?
     var selectedVideoSegmentID: UUID?
-    var showsLabel: Bool = true
-    var onSelectClip: (UUID) -> Void
-    var onSelectVideoSegment: (VideoSegment) -> Void
-    var onRowTap: (TimelineTrackType) -> Void
-    var onAdjustSelectedStart: (Double) -> Void
-    var onAdjustSelectedEnd: (Double) -> Void
-
-    private let labelWidth: CGFloat = 110
-    @GestureState private var resizePreview: ClipResizePreview = .inactive
+    var playbackTrack: TimelineTrackType?
+    var dragPreview: ClipDragPreview
 
     var body: some View {
-        HStack(spacing: 0) {
-            if showsLabel {
-                TimelineTrackLabelView(trackType: trackType)
-                    .frame(width: labelWidth)
+        Canvas { context, size in
+            let pps = max(0.1, pixelsPerSecond)
+            func xFor(_ t: Double) -> CGFloat { leadingInset + CGFloat(t) * pps - offset }
+            let visibleStart = Double((offset - leadingInset) / pps)
+            let visibleEnd = Double((offset - leadingInset + size.width) / pps)
+
+            // 行の背景と区切り線
+            for (index, track) in tracks.enumerated() {
+                let y = CGFloat(index) * rowHeight
+                let rowRect = CGRect(x: 0, y: y, width: size.width, height: rowHeight)
+
+                if track == .video || track == .match {
+                    context.fill(Path(rowRect), with: .color(Color.white.opacity(0.03)))
+                }
+                if track == playbackTrack {
+                    context.fill(Path(rowRect), with: .color(track.color.opacity(0.10)))
+                }
+
+                var separator = Path()
+                separator.move(to: CGPoint(x: 0, y: y + rowHeight))
+                separator.addLine(to: CGPoint(x: size.width, y: y + rowHeight))
+                context.stroke(separator, with: .color(Color.white.opacity(0.07)), lineWidth: 1)
             }
 
-            GeometryReader { proxy in
-                ZStack(alignment: .leading) {
-                    Rectangle()
-                        .fill(trackType == .video || trackType == .match ? Color.white.opacity(0.030) : Color.clear)
+            // 5分ごとの縦グリッド
+            let gridStep: Double = 300
+            var gridTime = max(0, (visibleStart / gridStep).rounded(.down) * gridStep)
+            while gridTime <= min(duration, visibleEnd) {
+                var line = Path()
+                line.move(to: CGPoint(x: xFor(gridTime), y: 0))
+                line.addLine(to: CGPoint(x: xFor(gridTime), y: size.height))
+                context.stroke(line, with: .color(Color.white.opacity(0.06)), lineWidth: 1)
+                gridTime += gridStep
+            }
 
-                    TimelineGrid(duration: duration)
-
-                    switch trackType {
-                    case .video:
-                        videoClips(width: proxy.size.width)
-                    case .match:
-                        matchClips(width: proxy.size.width)
-                    default:
-                        eventClips(width: proxy.size.width)
-                    }
-                }
-                .contentShape(Rectangle())
-                .onTapGesture {
-                    onRowTap(trackType)
+            // 各行の中身
+            for (index, track) in tracks.enumerated() {
+                let y = CGFloat(index) * rowHeight
+                switch track {
+                case .video:
+                    drawVideoRow(context: context, y: y, xFor: xFor, pps: pps, visibleStart: visibleStart, visibleEnd: visibleEnd)
+                case .match:
+                    drawMatchRow(context: context, y: y, xFor: xFor, pps: pps, visibleStart: visibleStart, visibleEnd: visibleEnd)
+                case .deleteTool:
+                    break
+                default:
+                    drawEventRow(context: context, track: track, y: y, xFor: xFor, pps: pps, visibleStart: visibleStart, visibleEnd: visibleEnd)
                 }
             }
-        }
-        .overlay(alignment: .bottom) {
-            Rectangle()
-                .fill(Color.white.opacity(0.07))
-                .frame(height: 1)
         }
     }
 
-    private func eventClips(width: CGFloat) -> some View {
-        ForEach(clips) { clip in
-            let times = displayedTimes(for: clip)
-            let block = blockFrame(start: times.start, end: times.end, width: width)
-            ZStack {
-                HStack(spacing: 6) {
+    private func drawEventRow(
+        context: GraphicsContext,
+        track: TimelineTrackType,
+        y: CGFloat,
+        xFor: (Double) -> CGFloat,
+        pps: CGFloat,
+        visibleStart: Double,
+        visibleEnd: Double
+    ) {
+        for clip in clips where clip.trackType == track {
+            var start = clip.startTime
+            var end = clip.endTime
+
+            // ドラッグ中の選択クリップは、指についてくる位置で描く
+            if clip.id == selectedClipID, dragPreview.mode != nil {
+                switch dragPreview.mode {
+                case .move:
+                    let length = end - start
+                    start = min(max(0, start + dragPreview.delta), max(0, duration - length))
+                    end = start + length
+                case .start:
+                    start = min(max(0, start + dragPreview.delta), end - 1)
+                case .end:
+                    end = max(min(duration, end + dragPreview.delta), start + 1)
+                case nil:
+                    break
+                }
+            }
+
+            guard end > visibleStart - 2, start < visibleEnd + 2 else { continue }
+
+            let startX = xFor(start)
+            let width = max(28, CGFloat(end - start) * pps)
+            let rect = CGRect(x: startX, y: y + 7, width: width, height: rowHeight - 14)
+            let path = Path(roundedRect: rect, cornerRadius: 6)
+            let isSelected = clip.id == selectedClipID
+
+            if isSelected {
+                context.stroke(
+                    Path(roundedRect: rect.insetBy(dx: -2.5, dy: -2.5), cornerRadius: 8),
+                    with: .color(clip.color.opacity(0.45)),
+                    lineWidth: 5
+                )
+            }
+            context.fill(path, with: .color(clip.color.opacity(0.92)))
+            context.stroke(
+                path,
+                with: .color(isSelected ? .white : Color.white.opacity(0.25)),
+                lineWidth: isSelected ? 2 : 1
+            )
+
+            if width >= 42 {
+                var clipped = context
+                clipped.clip(to: path)
+                clipped.draw(
                     Text(clip.title)
-                        .font(.system(size: 12, weight: .bold))
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.72)
-                    Spacer(minLength: 0)
-                    if clip.id == selectedClipID {
-                        HStack(spacing: 3) {
-                            Capsule().fill(Color.white.opacity(0.82)).frame(width: 3, height: 22)
-                            Capsule().fill(Color.white.opacity(0.82)).frame(width: 3, height: 22)
-                        }
-                    }
-                }
-                .foregroundStyle(.white)
-                .padding(.horizontal, 9)
-                .frame(width: block.width, height: rowHeight - 18)
-                .background(
-                    RoundedRectangle(cornerRadius: 6)
-                        .fill(clip.color.gradient)
+                        .font(.system(size: 11, weight: .bold))
+                        .foregroundStyle(.white),
+                    at: CGPoint(x: rect.minX + 8, y: rect.midY),
+                    anchor: .leading
                 )
-                .overlay(
-                    RoundedRectangle(cornerRadius: 6)
-                        .stroke(
-                            clip.id == selectedClipID ? Color.white : clip.color.opacity(0.85),
-                            lineWidth: clip.id == selectedClipID ? 2 : 1
-                        )
-                )
-                .shadow(
-                    color: clip.id == selectedClipID ? clip.color.opacity(0.60) : Color.clear,
-                    radius: 10
-                )
-
-                if clip.id == selectedClipID {
-                    HStack {
-                        TimelineClipResizeHandle()
-                            .highPriorityGesture(
-                                resizeGesture(edge: .start, width: width)
-                            )
-
-                        Spacer(minLength: 0)
-
-                        TimelineClipResizeHandle()
-                            .highPriorityGesture(
-                                resizeGesture(edge: .end, width: width)
-                            )
-                    }
-                    .padding(.horizontal, 4)
-                    .frame(width: block.width, height: rowHeight - 18)
-                }
-            }
-            .contentShape(RoundedRectangle(cornerRadius: 6))
-            .highPriorityGesture(TapGesture().onEnded {
-                onSelectClip(clip.id)
-            })
-            .position(x: block.midX, y: rowHeight / 2)
-            .transaction { transaction in
-                transaction.animation = nil
             }
         }
     }
 
-    private func videoClips(width: CGFloat) -> some View {
-        ForEach(videoSegments) { segment in
-            let block = blockFrame(start: segment.startTime, end: segment.endTime, width: width)
-            HStack(spacing: 8) {
-                Image(systemName: "film.fill")
-                    .font(.system(size: 15, weight: .bold))
-                    .foregroundStyle(.white)
-                    .frame(width: 30, height: 30)
-                    .background(
-                        RoundedRectangle(cornerRadius: 5)
-                            .fill(Color.white.opacity(0.16))
-                    )
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 5)
-                            .stroke(Color.white.opacity(0.60), lineWidth: 1)
-                    )
+    private func drawVideoRow(
+        context: GraphicsContext,
+        y: CGFloat,
+        xFor: (Double) -> CGFloat,
+        pps: CGFloat,
+        visibleStart: Double,
+        visibleEnd: Double
+    ) {
+        for segment in videoSegments {
+            guard segment.endTime > visibleStart - 2, segment.startTime < visibleEnd + 2 else { continue }
 
-                Text(segment.sourceName)
-                    .font(.system(size: 12, weight: .bold, design: .rounded))
-                    .foregroundStyle(.white.opacity(0.92))
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.70)
+            let startX = xFor(segment.startTime)
+            let width = max(34, CGFloat(segment.endTime - segment.startTime) * pps)
+            let rect = CGRect(x: startX, y: y + 8, width: width, height: rowHeight - 16)
+            let path = Path(roundedRect: rect, cornerRadius: 6)
+            let isSelected = segment.id == selectedVideoSegmentID
 
-                Spacer(minLength: 0)
-            }
-            .padding(.horizontal, 8)
-            .frame(width: block.width, height: rowHeight - 16)
-            .background(
-                RoundedRectangle(cornerRadius: 6)
-                    .fill(trackType.color.gradient)
+            context.fill(path, with: .color(TimelineTrackType.video.color.opacity(0.85)))
+            context.stroke(
+                path,
+                with: .color(isSelected ? .white : Color.white.opacity(0.32)),
+                lineWidth: isSelected ? 2 : 1
             )
-            .overlay(
-                RoundedRectangle(cornerRadius: 6)
-                    .stroke(segment.id == selectedVideoSegmentID ? Color.white : Color.white.opacity(0.32), lineWidth: segment.id == selectedVideoSegmentID ? 2 : 1)
+
+            var clipped = context
+            clipped.clip(to: path)
+            clipped.draw(
+                Text("\(Image(systemName: "film.fill")) \(segment.sourceName)")
+                    .font(.system(size: 11, weight: .bold, design: .rounded))
+                    .foregroundStyle(.white),
+                at: CGPoint(x: rect.minX + 8, y: rect.midY),
+                anchor: .leading
             )
-            .shadow(color: segment.id == selectedVideoSegmentID ? trackType.color.opacity(0.55) : .clear, radius: 8)
-            .contentShape(RoundedRectangle(cornerRadius: 6))
-            .highPriorityGesture(TapGesture().onEnded {
-                onSelectVideoSegment(segment)
-            })
-            .position(x: block.midX, y: rowHeight / 2)
         }
     }
 
-    private func matchClips(width: CGFloat) -> some View {
-        let sortedSegments = matchSegments.sorted { lhs, rhs in
+    private func drawMatchRow(
+        context: GraphicsContext,
+        y: CGFloat,
+        xFor: (Double) -> CGFloat,
+        pps: CGFloat,
+        visibleStart: Double,
+        visibleEnd: Double
+    ) {
+        let sorted = matchSegments.sorted { lhs, rhs in
             if lhs.startTime != rhs.startTime { return lhs.startTime < rhs.startTime }
             return lhs.endTime < rhs.endTime
         }
 
-        return ZStack(alignment: .leading) {
-            ForEach(Array(sortedSegments.indices.dropLast()), id: \.self) { index in
-                let current = sortedSegments[index]
-                let next = sortedSegments[index + 1]
-                if next.startTime > current.endTime {
-                    let gap = blockFrame(start: current.endTime, end: next.startTime, width: width)
-                    let label = current.halfType == next.halfType ? "停止" : "中断"
+        // 区間の切れ目(停止・中断)は破線で示す
+        if sorted.count >= 2 {
+            for index in 0..<(sorted.count - 1) {
+                let current = sorted[index]
+                let next = sorted[index + 1]
+                guard next.startTime > current.endTime,
+                      next.startTime > visibleStart - 2,
+                      current.endTime < visibleEnd + 2 else { continue }
 
-                    RoundedRectangle(cornerRadius: 5)
-                        .stroke(Color.white.opacity(0.26), style: StrokeStyle(lineWidth: 1, dash: [5, 4]))
-                        .frame(width: gap.width, height: rowHeight - 24)
-                        .overlay(
-                            Text(label)
-                                .font(.system(size: 11, weight: .semibold))
-                                .foregroundStyle(Color.white.opacity(0.58))
-                        )
-                        .position(x: gap.midX, y: rowHeight / 2)
-                }
-            }
-
-            ForEach(sortedSegments) { segment in
-                let block = blockFrame(start: segment.startTime, end: segment.endTime, width: width)
-                HStack(spacing: 8) {
-                    Circle()
-                        .fill(trackType.color)
-                        .frame(width: 10, height: 10)
-                        .overlay(Circle().stroke(Color.white.opacity(0.55), lineWidth: 1))
-
-                    Text(segment.displayLabel)
-                        .font(.system(size: 12, weight: .bold, design: .rounded))
-                        .foregroundStyle(Color.white.opacity(0.94))
-                        .multilineTextAlignment(.center)
-                        .lineLimit(2)
-                        .minimumScaleFactor(0.72)
-
-                    Spacer(minLength: 0)
-                }
-                .padding(.horizontal, 8)
-                .frame(width: block.width, height: rowHeight - 18)
-                .background(
-                    RoundedRectangle(cornerRadius: 6)
-                        .fill(
-                            LinearGradient(
-                                colors: [trackType.color.opacity(0.48), trackType.color.opacity(0.18)],
-                                startPoint: .leading,
-                                endPoint: .trailing
-                            )
-                        )
+                let rect = CGRect(
+                    x: xFor(current.endTime),
+                    y: y + 12,
+                    width: max(20, CGFloat(next.startTime - current.endTime) * pps),
+                    height: rowHeight - 24
                 )
-                .overlay(
-                    RoundedRectangle(cornerRadius: 6)
-                        .stroke(trackType.color.opacity(0.95), lineWidth: 1)
+                context.stroke(
+                    Path(roundedRect: rect, cornerRadius: 5),
+                    with: .color(Color.white.opacity(0.26)),
+                    style: StrokeStyle(lineWidth: 1, dash: [5, 4])
                 )
-                .position(x: block.midX, y: rowHeight / 2)
+                context.draw(
+                    Text(current.halfType == next.halfType ? "停止" : "中断")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(Color.white.opacity(0.58)),
+                    at: CGPoint(x: rect.midX, y: rect.midY)
+                )
             }
         }
-    }
 
-    private func blockFrame(start: Double, end: Double, width: CGFloat) -> (midX: CGFloat, width: CGFloat) {
-        let startX = width * CGFloat(max(0, min(duration, start)) / max(1, duration))
-        let endX = width * CGFloat(max(0, min(duration, end)) / max(1, duration))
-        let blockWidth = max(34, endX - startX)
-        return (startX + blockWidth / 2, blockWidth)
-    }
+        let matchColor = TimelineTrackType.match.color
+        for segment in sorted {
+            guard segment.endTime > visibleStart - 2, segment.startTime < visibleEnd + 2 else { continue }
 
-    private func displayedTimes(for clip: TimelineClip) -> (start: Double, end: Double) {
-        var start = clip.startTime
-        var end = clip.endTime
+            let startX = xFor(segment.startTime)
+            let width = max(34, CGFloat(segment.endTime - segment.startTime) * pps)
+            let rect = CGRect(x: startX, y: y + 9, width: width, height: rowHeight - 18)
+            let path = Path(roundedRect: rect, cornerRadius: 6)
 
-        guard clip.id == selectedClipID else {
-            return (start, end)
+            context.fill(
+                path,
+                with: .linearGradient(
+                    Gradient(colors: [matchColor.opacity(0.48), matchColor.opacity(0.18)]),
+                    startPoint: CGPoint(x: rect.minX, y: rect.midY),
+                    endPoint: CGPoint(x: rect.maxX, y: rect.midY)
+                )
+            )
+            context.stroke(path, with: .color(matchColor.opacity(0.95)), lineWidth: 1)
+
+            var clipped = context
+            clipped.clip(to: path)
+            clipped.draw(
+                Text(segment.displayLabel.replacingOccurrences(of: "\n", with: " "))
+                    .font(.system(size: 10.5, weight: .bold, design: .rounded))
+                    .foregroundStyle(Color.white.opacity(0.94)),
+                at: CGPoint(x: rect.minX + 8, y: rect.midY),
+                anchor: .leading
+            )
         }
-
-        switch resizePreview.edge {
-        case .start:
-            start = min(max(0, start + resizePreview.delta), end - 1)
-        case .end:
-            end = max(min(duration, end + resizePreview.delta), start + 1)
-        case .none:
-            break
-        }
-
-        return (start, end)
-    }
-
-    private func resizeGesture(edge: ClipResizeEdge, width: CGFloat) -> some Gesture {
-        DragGesture(minimumDistance: 1, coordinateSpace: .global)
-            .updating($resizePreview) { value, state, _ in
-                state = ClipResizePreview(edge: edge, delta: resizeDelta(for: value.translation.width, width: width))
-            }
-            .onEnded { value in
-                let delta = resizeDelta(for: value.translation.width, width: width)
-                switch edge {
-                case .start:
-                    onAdjustSelectedStart(delta)
-                case .end:
-                    onAdjustSelectedEnd(delta)
-                }
-            }
-    }
-
-    private func resizeDelta(for translation: CGFloat, width: CGFloat) -> Double {
-        Double(translation / max(1, width)) * duration
-    }
-
-    private enum ClipResizeEdge: Equatable {
-        case start
-        case end
-    }
-
-    private struct ClipResizePreview: Equatable {
-        var edge: ClipResizeEdge?
-        var delta: Double
-
-        static let inactive = ClipResizePreview(edge: nil, delta: 0)
     }
 }
 
@@ -2543,32 +2603,6 @@ private struct TimelineClipResizeHandle: View {
                     .stroke(Color.black.opacity(0.20), lineWidth: 1)
             )
             .shadow(color: Color.white.opacity(0.35), radius: 4)
-            .contentShape(Rectangle())
-    }
-}
-
-private struct TimelineGrid: View {
-    var duration: Double
-
-    var body: some View {
-        GeometryReader { proxy in
-            let width = max(1, proxy.size.width)
-            let minuteCount = max(1, Int(duration / 60))
-
-            ZStack(alignment: .leading) {
-                ForEach(0...minuteCount, id: \.self) { minute in
-                    if minute % 5 == 0 {
-                        Rectangle()
-                            .fill(Color.white.opacity(0.10))
-                            .frame(width: 1)
-                            .position(
-                                x: min(width, width * CGFloat(Double(minute * 60) / duration)),
-                                y: proxy.size.height / 2
-                            )
-                    }
-                }
-            }
-        }
     }
 }
 
