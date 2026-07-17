@@ -408,7 +408,7 @@ struct TeamEditorView: View {
             TeamColorPickerSheet(team: team)
         }
         .sheet(isPresented: $isShowingBulkKanaSheet) {
-            BulkKanaInputSheet(players: players, accent: accent)
+            BulkRosterInputSheet(players: players, accent: accent)
         }
         .sheet(item: $editingPlayer) { player in
             PlayerCardEditorSheet(
@@ -654,7 +654,7 @@ struct TeamEditorView: View {
             Button {
                 isShowingBulkKanaSheet = true
             } label: {
-                Label("読みをまとめて入力", systemImage: "character.book.closed")
+                Label("選手をまとめて入力", systemImage: "square.and.pencil")
                     .font(.headline.weight(.bold))
                     .foregroundStyle(.white)
                     .frame(maxWidth: .infinity)
@@ -1195,47 +1195,61 @@ private struct TeamColorPickerSheet: View {
 
 // MARK: - Player editor
 
-// MARK: - 読みの一括入力
+// MARK: - 選手情報の一括入力
 
-// 選手が多いとき、1人ずつカードを開かずに読み(かな)をまとめて入力する画面。
-// 保存時に英語表記も自動生成する(手で直した英語表記は上書きしない)。
-private struct BulkKanaInputSheet: View {
+// 選手が多いとき、1人ずつカードを開かずに背番号・名前・読み・英語表記を
+// まとめて編集する画面。読みを入れると英語表記が自動で入る(カード編集と同じ規則:
+// 英語表記を手で直してある選手は上書きしない)。
+private struct BulkRosterInputSheet: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.modelContext) private var modelContext
 
     // 入力途中の値を保持する下書き。保存を押すまで選手データには触らない。
-    private struct KanaDraft: Identifiable {
+    private struct RosterDraft: Identifiable {
         let id: UUID
-        let label: String
-        let originalKana: String
-        let originalRoman: String
+        let position: Int
+        var numberText: String
+        var name: String
         var kana: String
+        var roman: String
+    }
 
-        // 英語表記が「空」か「元の読みからの自動生成のまま」なら、保存時に追従して作り直す
-        var willAutoFillRoman: Bool {
-            originalRoman.isEmpty || originalRoman == PlayerNameRomanizer.roman(fromKana: originalKana)
-        }
+    // キーボードの「次へ」で降りていく先(選手×項目)
+    private enum Field: Hashable {
+        case name(UUID)
+        case kana(UUID)
+        case roman(UUID)
     }
 
     private let players: [Player]
     private let accent: Color
-    @State private var drafts: [KanaDraft]
-    @FocusState private var focusedID: UUID?
+    @State private var drafts: [RosterDraft]
+    @FocusState private var focused: Field?
 
     init(players: [Player], accent: Color) {
         self.players = players
         self.accent = accent
-        self._drafts = State(initialValue: players.map { player in
-            let name = (player.name?.isEmpty == false) ? player.name! : "名前未設定"
-            let label = player.number.map { "#\($0) \(name)" } ?? name
-            return KanaDraft(
+        self._drafts = State(initialValue: players.enumerated().map { index, player in
+            RosterDraft(
                 id: player.id,
-                label: label,
-                originalKana: player.nameKana ?? "",
-                originalRoman: player.nameRoman ?? "",
-                kana: player.nameKana ?? ""
+                position: index + 1,
+                numberText: player.number.map(String.init) ?? "",
+                name: player.name ?? "",
+                kana: player.nameKana ?? "",
+                roman: player.nameRoman ?? ""
             )
         })
+    }
+
+    // 下書きの中で重複している背番号(入力しながら気づけるようにオレンジ表示)
+    private var duplicatedNumbers: Set<Int> {
+        var seen: Set<Int> = []
+        var duplicated: Set<Int> = []
+        for draft in drafts {
+            guard let number = Int(draft.numberText.trimmingCharacters(in: .whitespacesAndNewlines)) else { continue }
+            if !seen.insert(number).inserted { duplicated.insert(number) }
+        }
+        return duplicated
     }
 
     var body: some View {
@@ -1250,7 +1264,7 @@ private struct BulkKanaInputSheet: View {
 
                 ScrollView {
                     VStack(spacing: 10) {
-                        Text("読み(かな)を入れると、保存時にカードの英語表記が自動で入ります。キーボードの「次へ」で下の選手に移動できます。")
+                        Text("背番号・名前・読み・英語表記をまとめて編集できます。読み(かな)を入れると英語表記が自動で入り、手で直した綴りはそのまま残ります。キーボードの「次へ」で下の欄に移動できます。")
                             .font(.caption)
                             .foregroundStyle(.white.opacity(0.5))
                             .frame(maxWidth: .infinity, alignment: .leading)
@@ -1264,7 +1278,7 @@ private struct BulkKanaInputSheet: View {
                     .padding(.bottom, 30)
                 }
             }
-            .navigationTitle("読みをまとめて入力")
+            .navigationTitle("選手をまとめて入力")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
@@ -1280,66 +1294,111 @@ private struct BulkKanaInputSheet: View {
         .preferredColorScheme(.dark)
     }
 
-    private func draftRow(_ draft: Binding<KanaDraft>) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text(draft.wrappedValue.label)
-                .font(.subheadline.weight(.bold))
-                .foregroundStyle(.white)
+    private func draftRow(_ draft: Binding<RosterDraft>) -> some View {
+        let value = draft.wrappedValue
+        let isDuplicated = Int(value.numberText.trimmingCharacters(in: .whitespacesAndNewlines))
+            .map { duplicatedNumbers.contains($0) } ?? false
 
-            TextField("やまだ たろう", text: draft.kana)
-                .foregroundStyle(.white)
-                .padding(.horizontal, 12)
-                .frame(height: 42)
-                .background(Color.white.opacity(0.07))
-                .clipShape(RoundedRectangle(cornerRadius: 11))
-                .focused($focusedID, equals: draft.wrappedValue.id)
-                .submitLabel(.next)
-                .onSubmit { focusNext(after: draft.wrappedValue.id) }
+        return VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 8) {
+                Text("\(value.position)")
+                    .font(.caption.weight(.bold).monospacedDigit())
+                    .foregroundStyle(.white.opacity(0.35))
+                    .frame(width: 24, alignment: .leading)
 
-            romanPreview(draft.wrappedValue)
+                TextField("番号", text: draft.numberText)
+                    .keyboardType(.numberPad)
+                    .multilineTextAlignment(.center)
+                    .foregroundStyle(isDuplicated ? Color.orange : Color.white)
+                    .frame(width: 58)
+                    .frame(height: 40)
+                    .background(Color.white.opacity(0.07))
+                    .clipShape(RoundedRectangle(cornerRadius: 10))
+
+                TextField("名前", text: draft.name)
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 12)
+                    .frame(height: 40)
+                    .background(Color.white.opacity(0.07))
+                    .clipShape(RoundedRectangle(cornerRadius: 10))
+                    .focused($focused, equals: .name(value.id))
+                    .submitLabel(.next)
+                    .onSubmit { focused = .kana(value.id) }
+            }
+
+            HStack(spacing: 8) {
+                Spacer().frame(width: 24)
+
+                TextField("読み(やまだ たろう)", text: draft.kana)
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 12)
+                    .frame(height: 40)
+                    .background(Color.white.opacity(0.07))
+                    .clipShape(RoundedRectangle(cornerRadius: 10))
+                    .focused($focused, equals: .kana(value.id))
+                    .submitLabel(.next)
+                    .onSubmit { focused = .roman(value.id) }
+            }
+
+            HStack(spacing: 8) {
+                Spacer().frame(width: 24)
+
+                TextField("英語表記(読みから自動)", text: draft.roman)
+                    .textInputAutocapitalization(.characters)
+                    .autocorrectionDisabled()
+                    .font(.callout.monospaced())
+                    .foregroundStyle(accent)
+                    .padding(.horizontal, 12)
+                    .frame(height: 40)
+                    .background(Color.white.opacity(0.07))
+                    .clipShape(RoundedRectangle(cornerRadius: 10))
+                    .focused($focused, equals: .roman(value.id))
+                    .submitLabel(.next)
+                    .onSubmit { focusNextPlayer(after: value.id) }
+            }
         }
         .padding(12)
         .background(Color.white.opacity(0.05))
         .clipShape(RoundedRectangle(cornerRadius: 14))
-    }
-
-    @ViewBuilder
-    private func romanPreview(_ draft: KanaDraft) -> some View {
-        let trimmedKana = draft.kana.trimmingCharacters(in: .whitespacesAndNewlines)
-        if draft.willAutoFillRoman {
-            let generated = PlayerNameRomanizer.roman(fromKana: trimmedKana)
-            if !generated.isEmpty {
-                Text(generated)
-                    .font(.caption.weight(.bold).monospaced())
-                    .foregroundStyle(accent)
+        // カード編集と同じ規則: 英語表記が空か「直す前の読みからの自動生成のまま」の
+        // ときだけ、読みの変更に英語表記を追従させる(手動の綴りは守る)
+        .onChange(of: draft.wrappedValue.kana) { oldKana, newKana in
+            let autoFromOld = PlayerNameRomanizer.roman(fromKana: oldKana)
+            if draft.wrappedValue.roman.isEmpty || draft.wrappedValue.roman == autoFromOld {
+                draft.wrappedValue.roman = PlayerNameRomanizer.roman(fromKana: newKana)
             }
-        } else {
-            Text("\(draft.originalRoman)(手動設定のため保持)")
-                .font(.caption)
-                .foregroundStyle(.white.opacity(0.45))
         }
     }
 
-    private func focusNext(after id: UUID) {
+    private func focusNextPlayer(after id: UUID) {
         guard let index = drafts.firstIndex(where: { $0.id == id }),
               index + 1 < drafts.count else {
-            focusedID = nil
+            focused = nil
             return
         }
-        focusedID = drafts[index + 1].id
+        focused = .name(drafts[index + 1].id)
     }
 
     private func saveAndDismiss() {
         let playersByID = Dictionary(uniqueKeysWithValues: players.map { ($0.id, $0) })
         for draft in drafts {
             guard let player = playersByID[draft.id] else { continue }
+
+            let trimmedNumber = draft.numberText.trimmingCharacters(in: .whitespacesAndNewlines)
+            if trimmedNumber.isEmpty {
+                player.number = nil
+            } else if let number = Int(trimmedNumber), number > 0 {
+                player.number = number
+            }
+
+            let trimmedName = draft.name.trimmingCharacters(in: .whitespacesAndNewlines)
+            player.name = trimmedName.isEmpty ? nil : trimmedName
+
             let trimmedKana = draft.kana.trimmingCharacters(in: .whitespacesAndNewlines)
             player.nameKana = trimmedKana.isEmpty ? nil : trimmedKana
 
-            if draft.willAutoFillRoman {
-                let generated = PlayerNameRomanizer.roman(fromKana: trimmedKana)
-                player.nameRoman = generated.isEmpty ? nil : generated
-            }
+            let trimmedRoman = draft.roman.trimmingCharacters(in: .whitespacesAndNewlines)
+            player.nameRoman = trimmedRoman.isEmpty ? nil : trimmedRoman
         }
         try? modelContext.save()
         dismiss()
