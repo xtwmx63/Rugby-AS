@@ -53,6 +53,8 @@ struct V3RecordingView: View {
     @State private var pendingKickAttempt: PendingKickAttempt?
     @State private var pendingSetPieceAttempt: PendingSetPieceAttempt?
     @State private var isSecondHalf = false
+    // いま進行中の攻撃の起点プレー(チップで選択)。ポゼッション保存時とトライに付けて、保存後にリセット。
+    @State private var selectedOriginRaw: String?
     @State private var isShowingFinishConfirmation = false
     @State private var isShowingHalfChangeConfirmation = false
     @State private var isSubstitutionSheetPresented = false
@@ -119,6 +121,7 @@ struct V3RecordingView: View {
                 actionGrid
                 HStack(spacing: 8) {
                     undoButton
+                    penaltyButton
                     substitutionButton
                 }
             }
@@ -392,9 +395,46 @@ struct V3RecordingView: View {
                     action: toggleTeam2
                 )
             }
+
+            // いま進行中の攻撃が何から始まったか(任意)。
+            // 選んだ値はポゼッション保存時とトライに付き、保存されるとリセットされる。
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 6) {
+                    Text("起点")
+                        .font(.caption.weight(.black))
+                        .foregroundStyle(.white.opacity(0.55))
+
+                    ForEach(PlayOrigin.allCases) { origin in
+                        originChip(
+                            origin,
+                            isSelected: selectedOriginRaw == origin.rawValue,
+                            action: {
+                                selectedOriginRaw = selectedOriginRaw == origin.rawValue ? nil : origin.rawValue
+                            }
+                        )
+                    }
+                }
+            }
         }
         .padding(8)
         .recordingCardBackground()
+    }
+
+    private func originChip(_ origin: PlayOrigin, isSelected: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Text(origin.displayName)
+                .font(.caption.weight(.bold))
+                .foregroundStyle(isSelected ? .white : .white.opacity(0.66))
+                .padding(.horizontal, 10)
+                .padding(.vertical, 5)
+                .background(isSelected ? Color.teal.opacity(0.85) : Color.white.opacity(0.08))
+                .clipShape(Capsule())
+                .overlay(
+                    Capsule()
+                        .stroke(isSelected ? Color.teal : Color.white.opacity(0.14), lineWidth: 1)
+                )
+        }
+        .buttonStyle(.plain)
     }
 
     private func possessionTile(
@@ -607,6 +647,21 @@ struct V3RecordingView: View {
         .opacity(undoableLastEvent == nil ? 0.45 : 1)
     }
 
+    // 反則を「記録対象のチームが犯した」として1件記録するボタン
+    private var penaltyButton: some View {
+        Button {
+            recordPenalty()
+        } label: {
+            Label("反則 \(penaltyCount)", systemImage: "flag.fill")
+                .font(.headline.weight(.bold))
+                .foregroundStyle(.orange)
+                .frame(maxWidth: .infinity, minHeight: 36)
+                .background(Color.orange.opacity(0.16))
+                .clipShape(RoundedRectangle(cornerRadius: 8))
+        }
+        .buttonStyle(.plain)
+    }
+
     // 交代を今の試合時間で記録するボタン
     private var substitutionButton: some View {
         Button {
@@ -688,6 +743,26 @@ struct V3RecordingView: View {
                         noPlayerScorerButton
                     }
                     .padding(.vertical, 2)
+                }
+
+                // 攻撃の起点(任意)。チップで選んでいた値が引き継がれ、ここで直せる
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 6) {
+                        Text("起点")
+                            .font(.caption.weight(.black))
+                            .foregroundStyle(.white.opacity(0.55))
+
+                        ForEach(PlayOrigin.allCases) { origin in
+                            originChip(
+                                origin,
+                                isSelected: attempt.originRaw == origin.rawValue,
+                                action: {
+                                    pendingScorerAttempt?.originRaw =
+                                        attempt.originRaw == origin.rawValue ? nil : origin.rawValue
+                                }
+                            )
+                        }
+                    }
                 }
             }
 
@@ -1055,8 +1130,10 @@ struct V3RecordingView: View {
                 teamID: match.homeTeamID,
                 outcome: "own",
                 seconds: seconds,
-                startSeconds: max(0, timeState.elapsedSeconds(at: date) - seconds)
+                startSeconds: max(0, timeState.elapsedSeconds(at: date) - seconds),
+                origin: selectedOriginRaw
             )
+            selectedOriginRaw = nil
         }
     }
 
@@ -1066,8 +1143,10 @@ struct V3RecordingView: View {
                 teamID: match.awayTeamID,
                 outcome: "own",
                 seconds: seconds,
-                startSeconds: max(0, timeState.elapsedSeconds(at: date) - seconds)
+                startSeconds: max(0, timeState.elapsedSeconds(at: date) - seconds),
+                origin: selectedOriginRaw
             )
+            selectedOriginRaw = nil
         }
     }
 
@@ -1141,7 +1220,8 @@ struct V3RecordingView: View {
             category: category,
             teamID: selectedInputTeam,
             seconds: timeState.elapsedSeconds(at: Date()),
-            half: currentHalf
+            half: currentHalf,
+            originRaw: selectedOriginRaw
         )
     }
 
@@ -1155,8 +1235,11 @@ struct V3RecordingView: View {
             playerID: attempt.playerID,
             seconds: attempt.seconds,
             half: attempt.half,
+            origin: attempt.originRaw,
             opensPlayerSheet: false
         )
+        // トライで攻撃が一区切りなので、起点チップは次の攻撃に向けてリセット
+        selectedOriginRaw = nil
     }
 
     private func recordPendingKick(outcome: String) {
@@ -1192,6 +1275,7 @@ struct V3RecordingView: View {
         playerID: UUID? = nil,
         seconds: Int? = nil,
         half: Int? = nil,
+        origin: String? = nil,
         opensPlayerSheet: Bool
     ) {
         let event = StatEvent(
@@ -1201,7 +1285,8 @@ struct V3RecordingView: View {
             category: category.rawValue,
             outcome: outcome,
             seconds: seconds ?? timeState.elapsedSeconds(at: Date()),
-            half: half ?? currentHalf
+            half: half ?? currentHalf,
+            origin: origin
         )
         modelContext.insert(event)
         try? modelContext.save()
@@ -1234,7 +1319,7 @@ struct V3RecordingView: View {
         try? modelContext.save()
     }
 
-    private func savePossessionEvent(teamID: UUID?, outcome: String, seconds: Int, startSeconds: Int? = nil) {
+    private func savePossessionEvent(teamID: UUID?, outcome: String, seconds: Int, startSeconds: Int? = nil, origin: String? = nil) {
         guard seconds > 0 else { return }
 
         let event = StatEvent(
@@ -1244,10 +1329,29 @@ struct V3RecordingView: View {
             outcome: outcome,
             seconds: seconds,
             startSeconds: startSeconds,
+            half: currentHalf,
+            origin: origin
+        )
+        modelContext.insert(event)
+        try? modelContext.save()
+    }
+
+    // ペナルティ(反則)を「犯したチーム」に1件記録する
+    private func recordPenalty() {
+        let event = StatEvent(
+            matchID: match.id,
+            teamID: selectedInputTeam,
+            category: "penalty",
+            outcome: "conceded",
+            seconds: timeState.elapsedSeconds(at: Date()),
             half: currentHalf
         )
         modelContext.insert(event)
         try? modelContext.save()
+    }
+
+    private var penaltyCount: Int {
+        matchEvents.filter { $0.category == "penalty" && $0.teamID == selectedInputTeam }.count
     }
 
     private func undoLastEvent() {
@@ -1319,6 +1423,8 @@ private struct PendingScorerAttempt {
     let half: Int
     var playerID: UUID?
     var hasSelectedPlayer = false
+    // 攻撃の起点(チップで選択済みの値を引き継ぎ、パネル上でも変更できる)
+    var originRaw: String?
 }
 
 private struct PendingKickAttempt {
