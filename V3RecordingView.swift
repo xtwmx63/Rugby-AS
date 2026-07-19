@@ -114,8 +114,7 @@ struct V3RecordingView: View {
 
             VStack(spacing: 6) {
                 topBar
-                scoreCard
-                clockCard
+                matchHeaderCard
                 possessionDashboard
                 originCard
                 actionGrid
@@ -263,15 +262,40 @@ struct V3RecordingView: View {
         }
     }
 
-    private var clockCard: some View {
-        ZStack {
-            TimelineView(.periodic(from: .now, by: 1)) { context in
-                Text(timeState.elapsedText(at: context.date))
-                    .font(.system(size: 34, weight: .bold, design: .monospaced))
-                    .foregroundStyle(.white)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.55)
-                    .frame(width: 112)
+    // スコア・ロゴ・時計を1枚にまとめたヘッダー。
+    // ロゴ(=記録対象の切替ボタン)を大きく、時計は控えめにする。
+    private var matchHeaderCard: some View {
+        VStack(spacing: 8) {
+            HStack(alignment: .center, spacing: 4) {
+                teamIdentity(teamID: match.homeTeamID, label: "HOME", accent: homeAccent, alignment: .leading)
+
+                Spacer(minLength: 0)
+
+                VStack(spacing: 3) {
+                    Text("\(score(for: match.homeTeamID)) - \(score(for: match.awayTeamID))")
+                        .font(.system(size: 30, weight: .bold, design: .rounded))
+                        .foregroundStyle(.white)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.6)
+
+                    HStack(spacing: 10) {
+                        halfScoreLabel("1ST", half: 0)
+                        halfScoreLabel("2ND", half: 1)
+                    }
+                    .font(.caption2.monospacedDigit())
+                    .foregroundStyle(.white.opacity(0.72))
+
+                    Text("ロゴをタップで記録対象を切替")
+                        .font(.system(size: 9, weight: .semibold))
+                        .foregroundStyle(.white.opacity(0.38))
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.7)
+                }
+                .frame(maxWidth: .infinity)
+
+                Spacer(minLength: 0)
+
+                teamIdentity(teamID: match.awayTeamID, label: "AWAY", accent: awayAccent, alignment: .trailing)
             }
 
             HStack {
@@ -293,50 +317,25 @@ struct V3RecordingView: View {
 
                 Spacer()
 
+                TimelineView(.periodic(from: .now, by: 1)) { context in
+                    Text(timeState.elapsedText(at: context.date))
+                        .font(.system(size: 22, weight: .bold, design: .monospaced))
+                        .foregroundStyle(.white)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.55)
+                        .frame(width: 92)
+                }
+
+                Spacer()
+
                 Button(timeState.isRunning ? "停止" : "開始") {
                     toggleTime()
                 }
                 .font(.headline.weight(.bold))
                 .foregroundStyle(.white)
-                .frame(width: 86, height: 44)
+                .frame(width: 86, height: 40)
                 .background(homeAccent)
                 .clipShape(RoundedRectangle(cornerRadius: 8))
-            }
-        }
-        .padding(8)
-        .recordingCardBackground()
-    }
-
-    private var scoreCard: some View {
-        ZStack {
-            VStack(spacing: 4) {
-                Text("\(score(for: match.homeTeamID)) - \(score(for: match.awayTeamID))")
-                    .font(.system(size: 32, weight: .bold, design: .rounded))
-                    .foregroundStyle(.white)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.6)
-
-                HStack(spacing: 10) {
-                    halfScoreLabel("1ST", half: 0)
-                    halfScoreLabel("2ND", half: 1)
-                }
-                .font(.caption2.monospacedDigit())
-                .foregroundStyle(.white.opacity(0.72))
-
-                Text("ロゴをタップで記録対象を切替")
-                    .font(.system(size: 9, weight: .semibold))
-                    .foregroundStyle(.white.opacity(0.38))
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.7)
-            }
-            .frame(width: 168)
-
-            HStack(spacing: 10) {
-                teamIdentity(teamID: match.homeTeamID, label: "HOME", accent: homeAccent, alignment: .leading)
-
-                Spacer()
-
-                teamIdentity(teamID: match.awayTeamID, label: "AWAY", accent: awayAccent, alignment: .trailing)
             }
         }
         .padding(8)
@@ -355,7 +354,7 @@ struct V3RecordingView: View {
         } label: {
             VStack(alignment: alignment, spacing: 3) {
                 teamLogoBox(for: teamID)
-                    .frame(width: 48, height: 48)
+                    .frame(width: 66, height: 66)
                     .overlay(
                         RoundedRectangle(cornerRadius: 8)
                             .stroke(accent, lineWidth: isSelected ? 3 : 0)
@@ -367,7 +366,7 @@ struct V3RecordingView: View {
                     .lineLimit(1)
                     .minimumScaleFactor(0.6)
                     .multilineTextAlignment(alignment == .leading ? .leading : .trailing)
-                    .frame(width: 80, alignment: alignment == .leading ? .leading : .trailing)
+                    .frame(width: 88, alignment: alignment == .leading ? .leading : .trailing)
 
                 Text(label)
                     .font(.caption2.weight(.black))
@@ -381,7 +380,7 @@ struct V3RecordingView: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .frame(width: 78, alignment: alignment == .leading ? .leading : .trailing)
+        .frame(width: 90, alignment: alignment == .leading ? .leading : .trailing)
     }
 
     private var possessionDashboard: some View {
