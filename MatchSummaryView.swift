@@ -206,6 +206,7 @@ struct MatchSummaryView: View {
                             setPieceCard
                                 .frame(maxWidth: .infinity)
                         }
+                        attackOriginCard
                         scoringProgressionCard
                         scoreMarginCard
                         scorerTimelineCard
@@ -384,6 +385,7 @@ struct MatchSummaryView: View {
                 setPieceCard
                     .frame(maxWidth: .infinity)
             }
+            attackOriginCard
             scoringProgressionCard
             scoreMarginCard
             scorerTimelineCard
@@ -701,10 +703,47 @@ struct MatchSummaryView: View {
                 .overlay(Color.white.opacity(0.18))
 
             setPieceRow(title: "スクラム", category: "scrum", symbol: "circle.grid.cross")
+
+            Divider()
+                .overlay(Color.white.opacity(0.18))
+
+            penaltyRow
         }
         .padding(12)
         .summaryCard()
         .frame(maxWidth: .infinity)
+    }
+
+    // 反則数(犯した側に記録される)。少ない方が良い数字なのでゲージにはしない
+    private var penaltyRow: some View {
+        VStack(spacing: 6) {
+            Text("ペナルティ(反則)")
+                .font(.subheadline.weight(.black))
+                .foregroundStyle(.white)
+
+            HStack(spacing: 8) {
+                Text("\(penaltyCount(for: match.homeTeamID))")
+                    .font(.title3.weight(.black).monospacedDigit())
+                    .foregroundStyle(homeAccent)
+                Spacer()
+                Image(systemName: "flag.fill")
+                    .font(.headline.weight(.semibold))
+                    .foregroundStyle(.white.opacity(0.52))
+                Spacer()
+                Text("\(penaltyCount(for: match.awayTeamID))")
+                    .font(.title3.weight(.black).monospacedDigit())
+                    .foregroundStyle(awayAccent)
+            }
+            .padding(.horizontal, 14)
+        }
+    }
+
+    private func penaltyCount(for teamID: UUID) -> Int {
+        matchEvents.filter { event in
+            event.category == "penalty"
+                && event.teamID == teamID
+                && (selectedScope.half == nil || event.half == selectedScope.half)
+        }.count
     }
 
     private func setPieceRow(title: String, category: String, symbol: String) -> some View {
@@ -748,6 +787,71 @@ struct MatchSummaryView: View {
                     .font(.caption2.monospacedDigit())
                     .foregroundStyle(.white.opacity(0.55))
             }
+        }
+    }
+
+    // MARK: - 攻撃の起点
+
+    // 起点別の集計行: (起点, HOME攻撃数, HOMEトライ数, AWAY攻撃数, AWAYトライ数)
+    private var attackOriginRows: [(origin: PlayOrigin, homeAttacks: Int, homeTries: Int, awayAttacks: Int, awayTries: Int)] {
+        let scoped = matchEvents.filter { event in
+            selectedScope.half == nil || event.half == selectedScope.half
+        }
+        let attacks = scoped.filter { $0.category == "possession" && $0.outcome == "own" && $0.origin != nil }
+        let tries = scoped.filter { $0.category == "try" && $0.origin != nil }
+
+        return PlayOrigin.allCases.compactMap { origin in
+            let homeAttacks = attacks.filter { $0.teamID == match.homeTeamID && $0.origin == origin.rawValue }.count
+            let awayAttacks = attacks.filter { $0.teamID == match.awayTeamID && $0.origin == origin.rawValue }.count
+            let homeTries = tries.filter { $0.teamID == match.homeTeamID && $0.origin == origin.rawValue }.count
+            let awayTries = tries.filter { $0.teamID == match.awayTeamID && $0.origin == origin.rawValue }.count
+            guard homeAttacks + awayAttacks + homeTries + awayTries > 0 else { return nil }
+            return (origin, homeAttacks, homeTries, awayAttacks, awayTries)
+        }
+    }
+
+    @ViewBuilder
+    private var attackOriginCard: some View {
+        let rows = attackOriginRows
+        if !rows.isEmpty {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(alignment: .firstTextBaseline) {
+                    Label("攻撃の起点", systemImage: "point.topleft.down.curvedto.point.bottomright.up")
+                        .font(.headline.weight(.black))
+                        .foregroundStyle(.white)
+                    Spacer()
+                    Text("攻撃回数 / うちトライ")
+                        .font(.caption2)
+                        .foregroundStyle(.white.opacity(0.5))
+                }
+
+                ForEach(rows, id: \.origin) { row in
+                    HStack(spacing: 8) {
+                        Text(row.origin.displayName)
+                            .font(.subheadline.weight(.bold))
+                            .foregroundStyle(.white)
+                            .frame(width: 104, alignment: .leading)
+
+                        Spacer(minLength: 0)
+
+                        Text("\(row.homeAttacks)回/\(row.homeTries)T")
+                            .font(.subheadline.weight(.black).monospacedDigit())
+                            .foregroundStyle(homeAccent)
+                            .frame(width: 76, alignment: .trailing)
+
+                        Rectangle()
+                            .fill(Color.white.opacity(0.18))
+                            .frame(width: 1, height: 14)
+
+                        Text("\(row.awayAttacks)回/\(row.awayTries)T")
+                            .font(.subheadline.weight(.black).monospacedDigit())
+                            .foregroundStyle(awayAccent)
+                            .frame(width: 76, alignment: .leading)
+                    }
+                }
+            }
+            .padding(12)
+            .summaryCard()
         }
     }
 
@@ -1455,12 +1559,21 @@ struct MatchSummaryView: View {
                 playerAvatar(playerID: event.playerID, accent: teamAccent, size: 30)
                     .opacity(isFailed ? 0.45 : 1.0)
 
-                Text(playerName(for: event.playerID))
-                    .font(.headline)
-                    .foregroundStyle(event.playerID == nil ? .orange : .white)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.6)
-                    .opacity(isFailed ? 0.45 : 1.0)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(playerName(for: event.playerID))
+                        .font(.headline)
+                        .foregroundStyle(event.playerID == nil ? .orange : .white)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.6)
+
+                    if let originName = PlayOrigin.displayName(for: event.origin) {
+                        Text("起点: \(originName)")
+                            .font(.caption2.weight(.bold))
+                            .foregroundStyle(.teal)
+                            .lineLimit(1)
+                    }
+                }
+                .opacity(isFailed ? 0.45 : 1.0)
 
                 Spacer(minLength: 4)
 

@@ -31,7 +31,7 @@ struct MatchCSVFile: Transferable {
 
 enum MatchCSVExporter {
     private static let headerLine =
-        "大会,試合日,ホーム,アウェイ,前後半,時間,カテゴリ,カテゴリID,チーム,背番号,選手名,結果,継続秒"
+        "大会,試合日,ホーム,アウェイ,前後半,時間,カテゴリ,カテゴリID,チーム,背番号,選手名,結果,継続秒,起点"
 
     static func makeFile(
         match: Match,
@@ -127,7 +127,8 @@ enum MatchCSVExporter {
                 number.map(String.init) ?? "",
                 player?.name ?? "",
                 outcomeLabel(event.outcome),
-                event.category == "possession" ? String(event.seconds) : ""
+                event.category == "possession" ? String(event.seconds) : "",
+                PlayOrigin.displayName(for: event.origin) ?? ""
             ]
             .map(escaped)
             .joined(separator: ",")
@@ -180,6 +181,7 @@ enum MatchCSVExporter {
         case "drop_goal": return "ドロップゴール"
         case "lineout": return "ラインアウト"
         case "scrum": return "スクラム"
+        case "penalty": return "ペナルティ(反則)"
         default: return category
         }
     }
@@ -190,6 +192,7 @@ enum MatchCSVExporter {
         case "fail": return "失敗"
         case "own": return "自チーム保持"
         case "opponent": return "相手保持"
+        case "conceded": return "反則"
         case "none": return ""
         default: return outcome
         }
