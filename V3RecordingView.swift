@@ -117,7 +117,7 @@ struct V3RecordingView: View {
                 scoreCard
                 clockCard
                 possessionDashboard
-                inputTargetCard
+                originCard
                 actionGrid
                 HStack(spacing: 8) {
                     undoButton
@@ -322,6 +322,12 @@ struct V3RecordingView: View {
                 }
                 .font(.caption2.monospacedDigit())
                 .foregroundStyle(.white.opacity(0.72))
+
+                Text("ロゴをタップで記録対象を切替")
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundStyle(.white.opacity(0.38))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
             }
             .frame(width: 168)
 
@@ -337,27 +343,44 @@ struct V3RecordingView: View {
         .recordingCardBackground()
     }
 
+    // チームロゴが「記録対象」の切替ボタンを兼ねる。
+    // 選択中: ロゴにチームカラーの枠+ラベル塗りつぶし。非選択: 全体を薄く。
     private func teamIdentity(teamID: UUID, label: String, accent: Color, alignment: HorizontalAlignment) -> some View {
-        VStack(alignment: alignment, spacing: 3) {
-            teamLogoBox(for: teamID)
-                .frame(width: 48, height: 48)
+        let isSelected = selectedInputTeam == teamID
 
-            Text(teamName(for: teamID))
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(.white)
-                .lineLimit(1)
-                .minimumScaleFactor(0.6)
-                .multilineTextAlignment(alignment == .leading ? .leading : .trailing)
-                .frame(width: 80, alignment: alignment == .leading ? .leading : .trailing)
+        return Button {
+            withAnimation(.easeInOut(duration: 0.16)) {
+                selectedInputTeamID = teamID
+            }
+        } label: {
+            VStack(alignment: alignment, spacing: 3) {
+                teamLogoBox(for: teamID)
+                    .frame(width: 48, height: 48)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 8)
+                            .stroke(accent, lineWidth: isSelected ? 3 : 0)
+                    )
 
-            Text(label)
-                .font(.caption2.weight(.black))
-                .foregroundStyle(accent)
-                .padding(.horizontal, 8)
-                .padding(.vertical, 2)
-                .background(accent.opacity(0.18))
-                .clipShape(RoundedRectangle(cornerRadius: 4))
+                Text(teamName(for: teamID))
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.white)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.6)
+                    .multilineTextAlignment(alignment == .leading ? .leading : .trailing)
+                    .frame(width: 80, alignment: alignment == .leading ? .leading : .trailing)
+
+                Text(label)
+                    .font(.caption2.weight(.black))
+                    .foregroundStyle(isSelected ? .white : accent)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 2)
+                    .background(isSelected ? accent : accent.opacity(0.18))
+                    .clipShape(RoundedRectangle(cornerRadius: 4))
+            }
+            .opacity(isSelected ? 1 : 0.55)
+            .contentShape(Rectangle())
         }
+        .buttonStyle(.plain)
         .frame(width: 78, alignment: alignment == .leading ? .leading : .trailing)
     }
 
@@ -396,11 +419,16 @@ struct V3RecordingView: View {
                 )
             }
 
-            // いま進行中の攻撃が何から始まったか(任意)。
-            // 選んだ値はポゼッション保存時とトライに付き、保存されるとリセットされる。
-            originChipRow(selectedRaw: selectedOriginRaw) { newValue in
-                selectedOriginRaw = newValue
-            }
+        }
+        .padding(8)
+        .recordingCardBackground()
+    }
+
+    // いま進行中の攻撃が何から始まったか(任意)。旧「記録対象」の位置に置く。
+    // 選んだ値はポゼッション保存時とトライに付き、保存されるとリセットされる。
+    private var originCard: some View {
+        originChipRow(selectedRaw: selectedOriginRaw) { newValue in
+            selectedOriginRaw = newValue
         }
         .padding(8)
         .recordingCardBackground()
@@ -495,40 +523,6 @@ struct V3RecordingView: View {
             RoundedRectangle(cornerRadius: 8)
                 .stroke(Color.white.opacity(0.08), lineWidth: 1)
         )
-    }
-
-    private var inputTargetCard: some View {
-        HStack(spacing: 10) {
-            Label("記録対象", systemImage: "person.3")
-                .font(.headline.weight(.bold))
-                .foregroundStyle(.white)
-                .frame(width: 96, alignment: .leading)
-
-            targetButton(title: "HOME", teamID: match.homeTeamID, accent: homeAccent)
-            targetButton(title: "AWAY", teamID: match.awayTeamID, accent: awayAccent)
-        }
-        .padding(8)
-        .recordingCardBackground()
-    }
-
-    private func targetButton(title: String, teamID: UUID, accent: Color) -> some View {
-        Button {
-            withAnimation(.easeInOut(duration: 0.16)) {
-                selectedInputTeamID = teamID
-            }
-        } label: {
-            Text(title)
-                .font(.headline.weight(.bold))
-                .foregroundStyle(selectedInputTeam == teamID ? .white : .white.opacity(0.7))
-                .frame(maxWidth: .infinity, minHeight: 34)
-                .background(selectedInputTeam == teamID ? accent : Color.clear)
-                .clipShape(RoundedRectangle(cornerRadius: 8))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 8)
-                        .stroke(Color.white.opacity(0.16), lineWidth: 1)
-                )
-        }
-        .buttonStyle(.plain)
     }
 
     private var actionGrid: some View {
