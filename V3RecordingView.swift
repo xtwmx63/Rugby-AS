@@ -455,7 +455,6 @@ struct V3RecordingView: View {
                     teamName: teamName(for: match.homeTeamID),
                     accent: homeAccent,
                     state: team1State,
-                    buttonTitle: team1State.isRunning ? "停止中" : "開始",
                     action: toggleTeam1
                 )
 
@@ -464,7 +463,6 @@ struct V3RecordingView: View {
                     teamName: "BIP",
                     accent: .orange,
                     state: bipState,
-                    buttonTitle: bipState.isRunning ? "一時停止中" : "開始",
                     action: toggleBIP
                 )
 
@@ -473,7 +471,6 @@ struct V3RecordingView: View {
                     teamName: teamName(for: match.awayTeamID),
                     accent: awayAccent,
                     state: team2State,
-                    buttonTitle: team2State.isRunning ? "停止中" : "開始",
                     action: toggleTeam2
                 )
             }
@@ -525,63 +522,67 @@ struct V3RecordingView: View {
         }
     }
 
+    // タイル全体が開始/停止ボタン。中の小さいボタンだと押しづらいため、
+    // 枠のどこを押しても反応する。計測中はチームカラーで塗って一目でわかるようにする。
     private func possessionTile(
         label: String,
         teamName: String,
         accent: Color,
         state: V3TimerState,
-        buttonTitle: String,
         action: @escaping () -> Void
     ) -> some View {
-        VStack(spacing: 4) {
-            HStack(spacing: 5) {
-                Text(label)
-                    .font(.caption2.weight(.black))
-                    .foregroundStyle(.white)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.65)
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 2)
-                    .frame(minWidth: 42)
-                    .background(accent.opacity(0.7))
-                    .clipShape(RoundedRectangle(cornerRadius: 4))
+        let isRunning = state.isRunning
+        let isDisabled = label == "BIP" && !timeState.isRunning
 
-                Text(teamName)
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.white.opacity(0.78))
+        return Button(action: action) {
+            VStack(spacing: 5) {
+                HStack(spacing: 5) {
+                    Text(label)
+                        .font(.caption2.weight(.black))
+                        .foregroundStyle(.white)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.65)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .frame(minWidth: 42)
+                        .background(accent.opacity(isRunning ? 1.0 : 0.7))
+                        .clipShape(RoundedRectangle(cornerRadius: 4))
+
+                    Text(teamName)
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.white.opacity(0.78))
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.6)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+                TimelineView(.periodic(from: .now, by: 1)) { context in
+                    Text(state.elapsedText(at: context.date))
+                        .font(.system(size: 24, weight: .bold, design: .monospaced))
+                        .foregroundStyle(.white)
+                        .minimumScaleFactor(0.55)
+                }
+
+                Text(isRunning ? "計測中・タップで停止" : "タップで開始")
+                    .font(.caption2.weight(.bold))
+                    .foregroundStyle(isRunning ? .white : .white.opacity(0.5))
                     .lineLimit(1)
                     .minimumScaleFactor(0.6)
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
-
-            TimelineView(.periodic(from: .now, by: 1)) { context in
-                Text(state.elapsedText(at: context.date))
-                    .font(.system(size: 22, weight: .bold, design: .monospaced))
-                    .foregroundStyle(.white)
-                    .minimumScaleFactor(0.55)
-            }
-
-            Button {
-                action()
-            } label: {
-                Text(buttonTitle)
-                    .font(.subheadline.weight(.bold))
-                    .foregroundStyle(.white)
-                    .frame(maxWidth: .infinity, minHeight: 32)
-            }
-            .buttonStyle(.plain)
-            .background(accent)
+            .padding(.vertical, 8)
+            .padding(.horizontal, 6)
+            .frame(maxWidth: .infinity)
+            .background(isRunning ? accent.opacity(0.45) : Color.black.opacity(0.18))
             .clipShape(RoundedRectangle(cornerRadius: 8))
-            .disabled(label == "BIP" && !timeState.isRunning)
-            .opacity(label == "BIP" && !timeState.isRunning ? 0.45 : 1)
+            .overlay(
+                RoundedRectangle(cornerRadius: 8)
+                    .stroke(isRunning ? accent : Color.white.opacity(0.08), lineWidth: isRunning ? 2 : 1)
+            )
+            .contentShape(RoundedRectangle(cornerRadius: 8))
         }
-        .padding(6)
-        .background(Color.black.opacity(0.18))
-        .clipShape(RoundedRectangle(cornerRadius: 8))
-        .overlay(
-            RoundedRectangle(cornerRadius: 8)
-                .stroke(Color.white.opacity(0.08), lineWidth: 1)
-        )
+        .buttonStyle(.plain)
+        .disabled(isDisabled)
+        .opacity(isDisabled ? 0.45 : 1)
     }
 
     private var actionGrid: some View {
