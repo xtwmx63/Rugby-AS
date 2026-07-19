@@ -53,8 +53,16 @@ struct V3RecordingView: View {
     @State private var pendingKickAttempt: PendingKickAttempt?
     @State private var pendingSetPieceAttempt: PendingSetPieceAttempt?
     @State private var isSecondHalf = false
-    // いま進行中の攻撃の起点プレー(チップで選択)。ポゼッション保存時とトライに付けて、保存後にリセット。
+    // 起点プレーの持ち場は3つ:
+    // selectedOriginRaw = 「次に始まる攻撃」への予約(チップの点灯)
+    // team1/team2OriginRaw = いま走っているHOME/AWAYポゼッションに付いた起点
+    // ポゼッション開始時に予約を引き取り、閉じるときに保存して消す。
     @State private var selectedOriginRaw: String?
+    @State private var team1OriginRaw: String?
+    @State private var team2OriginRaw: String?
+    // 「開始直後の後付けタグ」かどうかを判定するための、各ポゼッションの開始時刻
+    @State private var team1StartedAt: Date?
+    @State private var team2StartedAt: Date?
     @State private var isShowingFinishConfirmation = false
     @State private var isShowingHalfChangeConfirmation = false
     @State private var isSubstitutionSheetPresented = false
@@ -97,8 +105,50 @@ struct V3RecordingView: View {
             .first
     }
 
-    private var bottomPanelIsPresented: Bool {
-        pendingScorerAttempt != nil || pendingKickAttempt != nil || pendingSetPieceAttempt != nil
+    // チップに点灯させる値: 予約が最優先、なければ走行中の攻撃に付いている起点
+    private var displayedOriginRaw: String? {
+        if let selectedOriginRaw { return selectedOriginRaw }
+        if team1State.isRunning, let team1OriginRaw { return team1OriginRaw }
+        if team2State.isRunning, let team2OriginRaw { return team2OriginRaw }
+        return nil
+    }
+
+    // チップをタップしたときの割り振り。実際の操作順は2通りあるので両対応:
+    // ・攻撃が始まった直後(12秒以内)でまだ起点が無い → その攻撃への後付けタグ
+    //   (「AWAY開始→TO」のように、始まってから付ける操作)
+    // ・それ以外 → 「次に始まる攻撃」への予約
+    //   (「SC→HOME開始」のように、始まる前に付ける操作。前の攻撃が
+    //    まだ走っていても、その攻撃には付けない)
+    private func applyOriginSelection(_ raw: String?) {
+        guard let raw else {
+            // 点灯中のチップをもう一度タップ = 解除(予約→走行中の順に消す)
+            if selectedOriginRaw != nil {
+                selectedOriginRaw = nil
+            } else if team1State.isRunning, team1OriginRaw != nil {
+                team1OriginRaw = nil
+            } else if team2State.isRunning, team2OriginRaw != nil {
+                team2OriginRaw = nil
+            }
+            return
+        }
+
+        let now = Date()
+        if team1State.isRunning, team1OriginRaw == nil,
+           let startedAt = team1StartedAt, now.timeIntervalSince(startedAt) < 12 {
+            team1OriginRaw = raw
+        } else if team2State.isRunning, team2OriginRaw == nil,
+                  let startedAt = team2StartedAt, now.timeIntervalSince(startedAt) < 12 {
+            team2OriginRaw = raw
+        } else {
+            selectedOriginRaw = raw
+        }
+    }
+
+    // トライに付ける起点: 走っている攻撃の起点を最優先、なければ予約中のチップ
+    private func attackOrigin(for teamID: UUID) -> String? {
+        if teamID == match.homeTeamID, team1State.isRunning, let team1OriginRaw { return team1OriginRaw }
+        if teamID == match.awayTeamID, team2State.isRunning, let team2OriginRaw { return team2OriginRaw }
+        return selectedOriginRaw
     }
 
     private var inputTeamSwipeGesture: some Gesture {
@@ -426,8 +476,8 @@ struct V3RecordingView: View {
     // いま進行中の攻撃が何から始まったか(任意)。旧「記録対象」の位置に置く。
     // 選んだ値はポゼッション保存時とトライに付き、保存されるとリセットされる。
     private var originCard: some View {
-        originChipRow(selectedRaw: selectedOriginRaw) { newValue in
-            selectedOriginRaw = newValue
+        originChipRow(selectedRaw: displayedOriginRaw) { newValue in
+            applyOriginSelection(newValue)
         }
         .padding(8)
         .recordingCardBackground()
@@ -1065,6 +1115,10 @@ struct V3RecordingView: View {
         } else {
             stopTeam2(at: now)
             team1State.start(at: now)
+            // チップで予約されていた起点を、この攻撃が引き取る
+            team1OriginRaw = selectedOriginRaw
+            selectedOriginRaw = nil
+            team1StartedAt = now
             withAnimation(.easeInOut(duration: 0.16)) {
                 selectedInputTeamID = match.homeTeamID
             }
@@ -1079,6 +1133,10 @@ struct V3RecordingView: View {
         } else {
             stopTeam1(at: now)
             team2State.start(at: now)
+            // チップで予約されていた起点を、この攻撃が引き取る
+            team2OriginRaw = selectedOriginRaw
+            selectedOriginRaw = nil
+            team2StartedAt = now
             withAnimation(.easeInOut(duration: 0.16)) {
                 selectedInputTeamID = match.awayTeamID
             }
@@ -1110,9 +1168,10 @@ struct V3RecordingView: View {
                 outcome: "own",
                 seconds: seconds,
                 startSeconds: max(0, timeState.elapsedSeconds(at: date) - seconds),
-                origin: selectedOriginRaw
+                origin: team1OriginRaw
             )
-            selectedOriginRaw = nil
+            team1OriginRaw = nil
+            team1StartedAt = nil
         }
     }
 
@@ -1123,9 +1182,10 @@ struct V3RecordingView: View {
                 outcome: "own",
                 seconds: seconds,
                 startSeconds: max(0, timeState.elapsedSeconds(at: date) - seconds),
-                origin: selectedOriginRaw
+                origin: team2OriginRaw
             )
-            selectedOriginRaw = nil
+            team2OriginRaw = nil
+            team2StartedAt = nil
         }
     }
 
@@ -1200,7 +1260,7 @@ struct V3RecordingView: View {
             teamID: selectedInputTeam,
             seconds: timeState.elapsedSeconds(at: Date()),
             half: currentHalf,
-            originRaw: selectedOriginRaw
+            originRaw: attackOrigin(for: selectedInputTeam)
         )
     }
 
@@ -1217,8 +1277,11 @@ struct V3RecordingView: View {
             origin: attempt.originRaw,
             opensPlayerSheet: false
         )
-        // トライで攻撃が一区切りなので、起点チップは次の攻撃に向けてリセット
-        selectedOriginRaw = nil
+        // 予約中のチップをこのトライに使った場合だけ消費する。
+        // 走行中の攻撃に付いている分は、ポゼッションが閉じるときに消える。
+        if attempt.originRaw != nil, attempt.originRaw == selectedOriginRaw {
+            selectedOriginRaw = nil
+        }
     }
 
     private func recordPendingKick(outcome: String) {
