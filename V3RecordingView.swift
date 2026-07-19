@@ -168,12 +168,18 @@ struct V3RecordingView: View {
                 possessionDashboard
                 originCard
                 actionGrid
+
+                // 余った縦スペースはここに集約。上に空白が溜まらないよう
+                // コンテンツを上詰めにし、下段ボタンは画面の下に置く。
+                Spacer(minLength: 0)
+
                 HStack(spacing: 8) {
                     undoButton
                     penaltyButton
                     substitutionButton
                 }
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
             .padding(.horizontal, 8)
             .padding(.top, 4)
             .padding(.bottom, 8)
@@ -404,9 +410,9 @@ struct V3RecordingView: View {
         } label: {
             VStack(alignment: alignment, spacing: 3) {
                 teamLogoBox(for: teamID)
-                    .frame(width: 66, height: 66)
+                    .frame(width: 82, height: 82)
                     .overlay(
-                        RoundedRectangle(cornerRadius: 8)
+                        RoundedRectangle(cornerRadius: 10)
                             .stroke(accent, lineWidth: isSelected ? 3 : 0)
                     )
 
@@ -416,7 +422,7 @@ struct V3RecordingView: View {
                     .lineLimit(1)
                     .minimumScaleFactor(0.6)
                     .multilineTextAlignment(alignment == .leading ? .leading : .trailing)
-                    .frame(width: 88, alignment: alignment == .leading ? .leading : .trailing)
+                    .frame(width: 96, alignment: alignment == .leading ? .leading : .trailing)
 
                 Text(label)
                     .font(.caption2.weight(.black))
@@ -1454,7 +1460,7 @@ struct V3RecordingView: View {
             }
         }
         .background(Color.white)
-        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .clipShape(RoundedRectangle(cornerRadius: 10))
     }
 }
 
