@@ -162,9 +162,10 @@ struct V3RecordingView: View {
         ZStack(alignment: .bottom) {
             fieldBackground.ignoresSafeArea()
 
-            VStack(spacing: 6) {
+            VStack(spacing: 8) {
                 topBar
                 matchHeaderCard
+                clockCard
                 possessionDashboard
                 originCard
                 actionGrid
@@ -180,9 +181,9 @@ struct V3RecordingView: View {
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-            .padding(.horizontal, 8)
+            .padding(.horizontal, 10)
             .padding(.top, 4)
-            .padding(.bottom, 8)
+            .padding(.bottom, 10)
             .simultaneousGesture(inputTeamSwipeGesture)
 
             if pendingKickAttempt != nil {
@@ -318,18 +319,17 @@ struct V3RecordingView: View {
         }
     }
 
-    // スコア・ロゴ・時計を1枚にまとめたヘッダー。
-    // ロゴ(=記録対象の切替ボタン)を大きく、時計は控えめにする。
+    // スコア + 両チームのロゴ(=記録対象の切替ボタン)。時計は別カードに分ける。
     private var matchHeaderCard: some View {
-        VStack(spacing: 8) {
+        VStack(spacing: 6) {
             HStack(alignment: .center, spacing: 4) {
                 teamIdentity(teamID: match.homeTeamID, label: "HOME", accent: homeAccent, alignment: .leading)
 
                 Spacer(minLength: 0)
 
-                VStack(spacing: 3) {
+                VStack(spacing: 4) {
                     Text("\(score(for: match.homeTeamID)) - \(score(for: match.awayTeamID))")
-                        .font(.system(size: 30, weight: .bold, design: .rounded))
+                        .font(.system(size: 34, weight: .bold, design: .rounded))
                         .foregroundStyle(.white)
                         .lineLimit(1)
                         .minimumScaleFactor(0.6)
@@ -340,12 +340,6 @@ struct V3RecordingView: View {
                     }
                     .font(.caption2.monospacedDigit())
                     .foregroundStyle(.white.opacity(0.72))
-
-                    Text("ロゴをタップで記録対象を切替")
-                        .font(.system(size: 9, weight: .semibold))
-                        .foregroundStyle(.white.opacity(0.38))
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.7)
                 }
                 .frame(maxWidth: .infinity)
 
@@ -354,47 +348,57 @@ struct V3RecordingView: View {
                 teamIdentity(teamID: match.awayTeamID, label: "AWAY", accent: awayAccent, alignment: .trailing)
             }
 
-            HStack {
-                Button(isSecondHalf ? "後半" : "前半") {
-                    if !isSecondHalf {
-                        isShowingHalfChangeConfirmation = true
-                    }
-                }
-                .font(.headline.weight(.bold))
-                .foregroundStyle(homeAccent)
-                .frame(width: 58, height: 36)
-                .background(Color.white.opacity(0.06))
-                .clipShape(RoundedRectangle(cornerRadius: 8))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 8)
-                        .stroke(Color.white.opacity(0.12), lineWidth: 1)
-                )
-                .disabled(isSecondHalf)
-
-                Spacer()
-
-                TimelineView(.periodic(from: .now, by: 1)) { context in
-                    Text(timeState.elapsedText(at: context.date))
-                        .font(.system(size: 22, weight: .bold, design: .monospaced))
-                        .foregroundStyle(.white)
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.55)
-                        .frame(width: 92)
-                }
-
-                Spacer()
-
-                Button(timeState.isRunning ? "停止" : "開始") {
-                    toggleTime()
-                }
-                .font(.headline.weight(.bold))
-                .foregroundStyle(.white)
-                .frame(width: 86, height: 40)
-                .background(homeAccent)
-                .clipShape(RoundedRectangle(cornerRadius: 8))
-            }
+            Text("ロゴをタップで記録対象を切替")
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundStyle(.white.opacity(0.38))
+                .lineLimit(1)
+                .minimumScaleFactor(0.7)
         }
-        .padding(8)
+        .padding(10)
+        .recordingCardBackground()
+    }
+
+    // 試合時間の枠。前半/後半トグル・経過時間・開始/停止をまとめる。
+    private var clockCard: some View {
+        HStack(spacing: 12) {
+            Button(isSecondHalf ? "後半" : "前半") {
+                if !isSecondHalf {
+                    isShowingHalfChangeConfirmation = true
+                }
+            }
+            .font(.headline.weight(.bold))
+            .foregroundStyle(homeAccent)
+            .frame(width: 64, height: 40)
+            .background(Color.white.opacity(0.06))
+            .clipShape(RoundedRectangle(cornerRadius: 8))
+            .overlay(
+                RoundedRectangle(cornerRadius: 8)
+                    .stroke(Color.white.opacity(0.12), lineWidth: 1)
+            )
+            .disabled(isSecondHalf)
+
+            Spacer(minLength: 0)
+
+            TimelineView(.periodic(from: .now, by: 1)) { context in
+                Text(timeState.elapsedText(at: context.date))
+                    .font(.system(size: 30, weight: .bold, design: .monospaced))
+                    .foregroundStyle(.white)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.55)
+            }
+
+            Spacer(minLength: 0)
+
+            Button(timeState.isRunning ? "停止" : "開始") {
+                toggleTime()
+            }
+            .font(.headline.weight(.bold))
+            .foregroundStyle(.white)
+            .frame(width: 88, height: 44)
+            .background(homeAccent)
+            .clipShape(RoundedRectangle(cornerRadius: 8))
+        }
+        .padding(10)
         .recordingCardBackground()
     }
 
