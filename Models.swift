@@ -107,8 +107,6 @@ final class StatEvent {
     var startSeconds: Int?
     // 0 = 前半, 1 = 後半。既存データは default 0（前半）として扱う。
     var half: Int = 0
-    // 起点プレー(PlayOrigin の rawValue)。攻撃(possession)とトライに付ける任意項目。
-    var origin: String?
 
     init(
         id: UUID = UUID(),
@@ -119,8 +117,7 @@ final class StatEvent {
         outcome: String,
         seconds: Int,
         startSeconds: Int? = nil,
-        half: Int = 0,
-        origin: String? = nil
+        half: Int = 0
     ) {
         self.id = id
         self.matchID = matchID
@@ -131,7 +128,6 @@ final class StatEvent {
         self.seconds = seconds
         self.startSeconds = startSeconds
         self.half = half
-        self.origin = origin
     }
 }
 

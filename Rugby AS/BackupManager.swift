@@ -75,8 +75,6 @@ struct BackupStatEvent: Codable {
     var seconds: Int
     var startSeconds: Int?
     var half: Int
-    // 起点プレー。古いバックアップには無い項目なので nil 許容
-    var origin: String?
 }
 
 struct BackupMatchLineup: Codable {
@@ -188,8 +186,7 @@ enum BackupManager {
                     outcome: $0.outcome,
                     seconds: $0.seconds,
                     startSeconds: $0.startSeconds,
-                    half: $0.half,
-                    origin: $0.origin
+                    half: $0.half
                 )
             },
             matchLineups: lineups.map {
@@ -350,7 +347,6 @@ enum BackupManager {
                 existing.seconds = item.seconds
                 existing.startSeconds = item.startSeconds
                 existing.half = item.half
-                existing.origin = item.origin
             } else {
                 context.insert(StatEvent(
                     id: item.id,
@@ -361,8 +357,7 @@ enum BackupManager {
                     outcome: item.outcome,
                     seconds: item.seconds,
                     startSeconds: item.startSeconds,
-                    half: item.half,
-                    origin: item.origin
+                    half: item.half
                 ))
             }
             summary.statEvents += 1
