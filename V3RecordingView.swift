@@ -320,12 +320,16 @@ struct V3RecordingView: View {
     }
 
     // スコア + 両チームのロゴ(=記録対象の切替ボタン)。時計は別カードに分ける。
+    // 得点は ZStack の中央に置き、ロゴは左右の端に載せることで、
+    // ロゴの幅に関係なく得点が画面中央(縦軸)に来るようにする。
     private var matchHeaderCard: some View {
         VStack(spacing: 6) {
-            HStack(alignment: .center, spacing: 4) {
-                teamIdentity(teamID: match.homeTeamID, label: "HOME", accent: homeAccent, alignment: .leading)
-
-                Spacer(minLength: 0)
+            ZStack {
+                HStack(spacing: 4) {
+                    teamIdentity(teamID: match.homeTeamID, label: "HOME", accent: homeAccent, alignment: .leading)
+                    Spacer(minLength: 0)
+                    teamIdentity(teamID: match.awayTeamID, label: "AWAY", accent: awayAccent, alignment: .trailing)
+                }
 
                 VStack(spacing: 4) {
                     Text("\(score(for: match.homeTeamID)) - \(score(for: match.awayTeamID))")
@@ -341,11 +345,6 @@ struct V3RecordingView: View {
                     .font(.caption2.monospacedDigit())
                     .foregroundStyle(.white.opacity(0.72))
                 }
-                .frame(maxWidth: .infinity)
-
-                Spacer(minLength: 0)
-
-                teamIdentity(teamID: match.awayTeamID, label: "AWAY", accent: awayAccent, alignment: .trailing)
             }
 
             Text("ロゴをタップで記録対象を切替")
@@ -358,27 +357,10 @@ struct V3RecordingView: View {
         .recordingCardBackground()
     }
 
-    // 試合時間の枠。前半/後半トグル・経過時間・開始/停止をまとめる。
+    // 試合時間の枠。時間を ZStack の中央に固定し、前半/後半トグルと開始/停止は
+    // 左右の端に載せる。ボタンの幅が違っても時間が画面中央(縦軸)からずれない。
     private var clockCard: some View {
-        HStack(spacing: 12) {
-            Button(isSecondHalf ? "後半" : "前半") {
-                if !isSecondHalf {
-                    isShowingHalfChangeConfirmation = true
-                }
-            }
-            .font(.headline.weight(.bold))
-            .foregroundStyle(homeAccent)
-            .frame(width: 64, height: 40)
-            .background(Color.white.opacity(0.06))
-            .clipShape(RoundedRectangle(cornerRadius: 8))
-            .overlay(
-                RoundedRectangle(cornerRadius: 8)
-                    .stroke(Color.white.opacity(0.12), lineWidth: 1)
-            )
-            .disabled(isSecondHalf)
-
-            Spacer(minLength: 0)
-
+        ZStack {
             TimelineView(.periodic(from: .now, by: 1)) { context in
                 Text(timeState.elapsedText(at: context.date))
                     .font(.system(size: 30, weight: .bold, design: .monospaced))
@@ -387,16 +369,34 @@ struct V3RecordingView: View {
                     .minimumScaleFactor(0.55)
             }
 
-            Spacer(minLength: 0)
+            HStack(spacing: 12) {
+                Button(isSecondHalf ? "後半" : "前半") {
+                    if !isSecondHalf {
+                        isShowingHalfChangeConfirmation = true
+                    }
+                }
+                .font(.headline.weight(.bold))
+                .foregroundStyle(homeAccent)
+                .frame(width: 64, height: 40)
+                .background(Color.white.opacity(0.06))
+                .clipShape(RoundedRectangle(cornerRadius: 8))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8)
+                        .stroke(Color.white.opacity(0.12), lineWidth: 1)
+                )
+                .disabled(isSecondHalf)
 
-            Button(timeState.isRunning ? "停止" : "開始") {
-                toggleTime()
+                Spacer(minLength: 0)
+
+                Button(timeState.isRunning ? "停止" : "開始") {
+                    toggleTime()
+                }
+                .font(.headline.weight(.bold))
+                .foregroundStyle(.white)
+                .frame(width: 88, height: 44)
+                .background(homeAccent)
+                .clipShape(RoundedRectangle(cornerRadius: 8))
             }
-            .font(.headline.weight(.bold))
-            .foregroundStyle(.white)
-            .frame(width: 88, height: 44)
-            .background(homeAccent)
-            .clipShape(RoundedRectangle(cornerRadius: 8))
         }
         .padding(10)
         .recordingCardBackground()
