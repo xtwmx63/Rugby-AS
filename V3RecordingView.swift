@@ -398,43 +398,44 @@ struct V3RecordingView: View {
 
             // いま進行中の攻撃が何から始まったか(任意)。
             // 選んだ値はポゼッション保存時とトライに付き、保存されるとリセットされる。
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 6) {
-                    Text("起点")
-                        .font(.caption.weight(.black))
-                        .foregroundStyle(.white.opacity(0.55))
-
-                    ForEach(PlayOrigin.allCases) { origin in
-                        originChip(
-                            origin,
-                            isSelected: selectedOriginRaw == origin.rawValue,
-                            action: {
-                                selectedOriginRaw = selectedOriginRaw == origin.rawValue ? nil : origin.rawValue
-                            }
-                        )
-                    }
-                }
+            originChipRow(selectedRaw: selectedOriginRaw) { newValue in
+                selectedOriginRaw = newValue
             }
         }
         .padding(8)
         .recordingCardBackground()
     }
 
-    private func originChip(_ origin: PlayOrigin, isSelected: Bool, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Text(origin.displayName)
-                .font(.caption.weight(.bold))
-                .foregroundStyle(isSelected ? .white : .white.opacity(0.66))
-                .padding(.horizontal, 10)
-                .padding(.vertical, 5)
-                .background(isSelected ? Color.teal.opacity(0.85) : Color.white.opacity(0.08))
-                .clipShape(Capsule())
-                .overlay(
-                    Capsule()
-                        .stroke(isSelected ? Color.teal : Color.white.opacity(0.14), lineWidth: 1)
-                )
+    // 起点ボタンの列。スクロールさせず全ボタンを等幅で並べる
+    // (横スクロールにすると HOME/AWAY 切替スワイプと衝突するため)。
+    private func originChipRow(selectedRaw: String?, onSelect: @escaping (String?) -> Void) -> some View {
+        HStack(spacing: 5) {
+            Text("起点")
+                .font(.caption.weight(.black))
+                .foregroundStyle(.white.opacity(0.55))
+                .frame(width: 28)
+
+            ForEach(PlayOrigin.allCases) { origin in
+                let isSelected = selectedRaw == origin.rawValue
+                Button {
+                    onSelect(isSelected ? nil : origin.rawValue)
+                } label: {
+                    Text(origin.shortName)
+                        .font(.subheadline.weight(.black))
+                        .foregroundStyle(isSelected ? .white : .white.opacity(0.66))
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.55)
+                        .frame(maxWidth: .infinity, minHeight: 40)
+                        .background(isSelected ? Color.teal.opacity(0.85) : Color.white.opacity(0.08))
+                        .clipShape(RoundedRectangle(cornerRadius: 8))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 8)
+                                .stroke(isSelected ? Color.teal : Color.white.opacity(0.14), lineWidth: 1)
+                        )
+                }
+                .buttonStyle(.plain)
+            }
         }
-        .buttonStyle(.plain)
     }
 
     private func possessionTile(
@@ -746,23 +747,8 @@ struct V3RecordingView: View {
                 }
 
                 // 攻撃の起点(任意)。チップで選んでいた値が引き継がれ、ここで直せる
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 6) {
-                        Text("起点")
-                            .font(.caption.weight(.black))
-                            .foregroundStyle(.white.opacity(0.55))
-
-                        ForEach(PlayOrigin.allCases) { origin in
-                            originChip(
-                                origin,
-                                isSelected: attempt.originRaw == origin.rawValue,
-                                action: {
-                                    pendingScorerAttempt?.originRaw =
-                                        attempt.originRaw == origin.rawValue ? nil : origin.rawValue
-                                }
-                            )
-                        }
-                    }
+                originChipRow(selectedRaw: attempt.originRaw) { newValue in
+                    pendingScorerAttempt?.originRaw = newValue
                 }
             }
 

@@ -31,6 +31,19 @@ enum PlayOrigin: String, CaseIterable, Identifiable {
         }
     }
 
+    // 記録画面のボタン用の略称。1行に7個並べてもタップしやすい大きさを保つため
+    var shortName: String {
+        switch self {
+        case .scrum: return "SC"
+        case .lineout: return "LO"
+        case .turnover: return "TO"
+        case .kick: return "キック"
+        case .penalty: return "PEN"
+        case .kickoff: return "KO"
+        case .other: return "他"
+        }
+    }
+
     /// 保存された rawValue から表示名を引く(不明値・nil は nil)
     static func displayName(for raw: String?) -> String? {
         raw.flatMap { PlayOrigin(rawValue: $0)?.displayName }
