@@ -424,9 +424,9 @@ struct V3RecordingView: View {
         let isSelected = selectedInputTeam == teamID
 
         return Button {
-            withAnimation(.easeInOut(duration: 0.16)) {
-                selectedInputTeamID = teamID
-            }
+            // withAnimation で包むと、切替に連動する画面中の色・数字が
+            // 0.16秒かけてクロスフェードし、体感のラグになる。即時反映にする。
+            selectedInputTeamID = teamID
         } label: {
             VStack(alignment: alignment, spacing: 3) {
                 teamLogoBox(for: teamID)
@@ -1111,10 +1111,7 @@ struct V3RecordingView: View {
 
     private func switchInputTeamIfNeeded(width: CGFloat, height: CGFloat) {
         guard abs(width) > 64, abs(width) > abs(height) * 1.4 else { return }
-
-        withAnimation(.easeInOut(duration: 0.16)) {
-            selectedInputTeamID = width < 0 ? match.awayTeamID : match.homeTeamID
-        }
+        selectedInputTeamID = width < 0 ? match.awayTeamID : match.homeTeamID
     }
 
     // MARK: - Half change
@@ -1184,9 +1181,7 @@ struct V3RecordingView: View {
             team1OriginRaw = selectedOriginRaw
             selectedOriginRaw = nil
             team1StartedAt = now
-            withAnimation(.easeInOut(duration: 0.16)) {
-                selectedInputTeamID = match.homeTeamID
-            }
+            selectedInputTeamID = match.homeTeamID
         }
     }
 
@@ -1202,9 +1197,7 @@ struct V3RecordingView: View {
             team2OriginRaw = selectedOriginRaw
             selectedOriginRaw = nil
             team2StartedAt = now
-            withAnimation(.easeInOut(duration: 0.16)) {
-                selectedInputTeamID = match.awayTeamID
-            }
+            selectedInputTeamID = match.awayTeamID
         }
     }
 
