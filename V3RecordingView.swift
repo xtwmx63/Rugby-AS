@@ -336,7 +336,7 @@ struct V3RecordingView: View {
 
                 VStack(spacing: 4) {
                     Text("\(score(for: match.homeTeamID)) - \(score(for: match.awayTeamID))")
-                        .font(.system(size: 50, weight: .bold, design: .rounded))
+                        .font(.system(size: 46, weight: .bold, design: .rounded))
                         .foregroundStyle(.white)
                         .lineLimit(1)
                         .minimumScaleFactor(0.5)
@@ -373,7 +373,7 @@ struct V3RecordingView: View {
             }
             .font(.system(size: 17, weight: .bold))
             .foregroundStyle(homeAccent)
-            .frame(width: 72, height: 50)
+            .frame(width: 72, height: 46)
             .background(Color.white.opacity(0.06))
             .clipShape(RoundedRectangle(cornerRadius: 12))
             .overlay(
@@ -385,7 +385,7 @@ struct V3RecordingView: View {
 
             TimelineView(.periodic(from: .now, by: 1)) { context in
                 Text(timeState.elapsedText(at: context.date))
-                    .font(.system(size: 38, weight: .bold, design: .monospaced))
+                    .font(.system(size: 36, weight: .bold, design: .monospaced))
                     .foregroundStyle(.white)
                     .lineLimit(1)
                     .minimumScaleFactor(0.4)
@@ -401,7 +401,7 @@ struct V3RecordingView: View {
                 )
                 .font(.system(size: 17, weight: .bold))
                 .foregroundStyle(.white)
-                .frame(width: 104, height: 50)
+                .frame(width: 104, height: 46)
                 .background(
                     LinearGradient(
                         colors: [homeAccent, homeAccent.opacity(0.72)],
@@ -430,7 +430,7 @@ struct V3RecordingView: View {
         } label: {
             VStack(alignment: alignment, spacing: 3) {
                 teamLogoBox(for: teamID)
-                    .frame(width: 82, height: 82)
+                    .frame(width: 76, height: 76)
                     .overlay(
                         RoundedRectangle(cornerRadius: 10)
                             .stroke(accent, lineWidth: isSelected ? 3 : 0)
@@ -516,7 +516,7 @@ struct V3RecordingView: View {
                 .lineLimit(1)
                 .fixedSize(horizontal: true, vertical: false)
                 .padding(.horizontal, 10)
-                .frame(minHeight: 50)
+                .frame(minHeight: 46)
                 .background(
                     LinearGradient(
                         colors: [Color.blue.opacity(0.85), Color.blue.opacity(0.55)],
@@ -536,7 +536,7 @@ struct V3RecordingView: View {
                         .foregroundStyle(isSelected ? .white : .white.opacity(0.66))
                         .lineLimit(1)
                         .minimumScaleFactor(0.5)
-                        .frame(maxWidth: .infinity, minHeight: 50)
+                        .frame(maxWidth: .infinity, minHeight: 46)
                         .background(isSelected ? Color.teal.opacity(0.85) : Color.white.opacity(0.07))
                         .clipShape(RoundedRectangle(cornerRadius: 12))
                         .overlay(
@@ -585,7 +585,7 @@ struct V3RecordingView: View {
 
                 TimelineView(.periodic(from: .now, by: 1)) { context in
                     Text(state.elapsedText(at: context.date))
-                        .font(.system(size: 26, weight: .bold, design: .monospaced))
+                        .font(.system(size: 24, weight: .bold, design: .monospaced))
                         .foregroundStyle(.white)
                         .minimumScaleFactor(0.55)
                 }
@@ -596,7 +596,7 @@ struct V3RecordingView: View {
                     .lineLimit(1)
                     .minimumScaleFactor(0.6)
             }
-            .padding(.vertical, 10)
+            .padding(.vertical, 8)
             .padding(.horizontal, 6)
             .frame(maxWidth: .infinity)
             .background(isRunning ? accent.opacity(0.16) : Color.black.opacity(0.18))
@@ -668,7 +668,7 @@ struct V3RecordingView: View {
         .foregroundStyle(.white)
         .padding(.horizontal, 12)
         .frame(maxWidth: .infinity)
-        .frame(height: 62)
+        .frame(height: 56)
         .background(
             LinearGradient(
                 colors: [accent.opacity(0.92), accent.opacity(0.55)],
@@ -717,7 +717,7 @@ struct V3RecordingView: View {
             Label("取り消し", systemImage: "trash.fill")
                 .font(.system(size: 16, weight: .bold))
                 .foregroundStyle(.white)
-                .frame(maxWidth: .infinity, minHeight: 52)
+                .frame(maxWidth: .infinity, minHeight: 50)
                 .background(
                     LinearGradient(
                         colors: [Color(red: 0.72, green: 0.14, blue: 0.18), Color(red: 0.45, green: 0.08, blue: 0.12)],
@@ -744,7 +744,7 @@ struct V3RecordingView: View {
             Label("反則 \(penaltyCount)", systemImage: "flag.fill")
                 .font(.system(size: 16, weight: .bold))
                 .foregroundStyle(.white)
-                .frame(maxWidth: .infinity, minHeight: 52)
+                .frame(maxWidth: .infinity, minHeight: 50)
                 .background(
                     LinearGradient(
                         colors: [Color(red: 0.85, green: 0.48, blue: 0.10), Color(red: 0.58, green: 0.30, blue: 0.05)],
@@ -769,7 +769,7 @@ struct V3RecordingView: View {
             Label("交代", systemImage: "arrow.left.arrow.right")
                 .font(.system(size: 16, weight: .bold))
                 .foregroundStyle(.cyan)
-                .frame(maxWidth: .infinity, minHeight: 52)
+                .frame(maxWidth: .infinity, minHeight: 50)
                 .background(
                     LinearGradient(
                         colors: [Color(red: 0.10, green: 0.20, blue: 0.36), Color(red: 0.05, green: 0.12, blue: 0.24)],
