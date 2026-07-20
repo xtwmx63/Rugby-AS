@@ -185,8 +185,8 @@ struct V3RecordingView: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
             .padding(.horizontal, 10)
-            .padding(.top, 4)
-            .padding(.bottom, 10)
+            .padding(.top, 16)
+            .padding(.bottom, 24)
             .simultaneousGesture(inputTeamSwipeGesture)
 
             if pendingKickAttempt != nil {
