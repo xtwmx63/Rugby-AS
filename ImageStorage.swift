@@ -38,6 +38,27 @@ enum ImageStorage {
         return write(pngData, image: resized, fileExtension: "png")
     }
 
+    // 名簿カード用の縮小画像キャッシュ。原寸(最大1024px)を15枚並べて
+    // 毎フレーム縮小合成すると重いので、表示サイズに近い縮小版を別に持つ。
+    private static let thumbnailCache: NSCache<NSString, UIImage> = {
+        let cache = NSCache<NSString, UIImage>()
+        cache.countLimit = 256
+        return cache
+    }()
+
+    /// カード表示用の縮小版(長辺 maxDimension)。ファイル名は使い回されない
+    /// (UUID)前提なのでキャッシュは名前+サイズをキーにする。
+    static func thumbnail(named name: String, maxDimension: CGFloat = 360) -> UIImage? {
+        let key = "thumb-\(Int(maxDimension))-\(name)" as NSString
+        if let cached = thumbnailCache.object(forKey: key) {
+            return cached
+        }
+        guard let original = image(named: name) else { return nil }
+        let small = resized(original, maxDimension: maxDimension)
+        thumbnailCache.setObject(small, forKey: key)
+        return small
+    }
+
     static func image(named name: String) -> UIImage? {
         let key = name as NSString
         if let cached = cache.object(forKey: key) {

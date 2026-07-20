@@ -838,8 +838,8 @@ private struct PlayerCollectionCard: View {
             .clipShape(cardShape)
             .overlay(cardShape.stroke(metallicBorder, lineWidth: 2.4))
             .overlay(cardShape.inset(by: 2.4).stroke(.white.opacity(0.5), lineWidth: 0.8))
-            .shadow(color: .black.opacity(0.45), radius: 6, y: 4)
-            .shadow(color: accent.opacity(0.22), radius: 10, y: 2)
+            // 影はカード枚数ぶんオフスクリーン描画が積み上がって名簿全体が
+            // 重くなるため付けない。立体感は金属枠と内側の銀ラインで出す。
         }
         // 1:1 より名前欄の分だけ少し縦長。3列でも顔写真を大きく保つ。
         .aspectRatio(0.78, contentMode: .fit)
@@ -879,19 +879,20 @@ private struct PlayerCollectionCard: View {
     }
 
     /// トレカの箔のように、左上から斜めに走る光の帯。写真エリアに艶を足す。
+    /// blendMode はカードごとに合成の追加パスがかかり名簿が重くなるため、
+    /// 通常合成のまま不透明度を抑えて似た見た目にしている。
     private var glossOverlay: some View {
         LinearGradient(
             stops: [
-                .init(color: .white.opacity(0.50), location: 0.0),
-                .init(color: .white.opacity(0.10), location: 0.16),
+                .init(color: .white.opacity(0.34), location: 0.0),
+                .init(color: .white.opacity(0.08), location: 0.16),
                 .init(color: .white.opacity(0.0), location: 0.32),
-                .init(color: .white.opacity(0.12), location: 0.50),
+                .init(color: .white.opacity(0.09), location: 0.50),
                 .init(color: .white.opacity(0.0), location: 0.64)
             ],
             startPoint: .topLeading,
             endPoint: .bottomTrailing
         )
-        .blendMode(.screen)
         .allowsHitTesting(false)
     }
 
@@ -913,8 +914,10 @@ private struct PlayerCollectionCard: View {
 
     @ViewBuilder
     private func playerPhoto(height: CGFloat) -> some View {
-        if let name = player.imagePath, let uiImage = ImageStorage.image(named: name) {
-            if uiImage.hasTransparentPixels {
+        // 表示は縮小版を使う(原寸を並べるとスクロールが重くなる)。
+        // 背景削除済みかどうかは拡張子で判定する(透明PNGは savePNG 経由の .png のみ)。
+        if let name = player.imagePath, let uiImage = ImageStorage.thumbnail(named: name) {
+            if name.lowercased().hasSuffix(".png") {
                 Image(uiImage: uiImage)
                     .resizable()
                     .scaledToFit()
@@ -1063,10 +1066,13 @@ private struct CardTextureLines: View {
     var body: some View {
         GeometryReader { proxy in
             ZStack {
-                // 幅広のぼかした白帯 = ブラシ地金の「面」の艶
+                // 幅広の白帯 = ブラシ地金の「面」の艶。
+                // blur はカード枚数ぶん GPU 負荷が積み上がるので、
+                // 太さと薄さを変えた線の重ねがけで柔らかさを擬似的に出す。
                 diagonalLines(in: proxy.size, spacing: 34)
-                    .stroke(Color.white.opacity(0.55), lineWidth: 9)
-                    .blur(radius: 6)
+                    .stroke(Color.white.opacity(0.10), lineWidth: 16)
+                diagonalLines(in: proxy.size, spacing: 34)
+                    .stroke(Color.white.opacity(0.16), lineWidth: 9)
 
                 // 細い白すじ = ヘアライン
                 diagonalLines(in: proxy.size, spacing: 12)
@@ -1825,18 +1831,6 @@ private enum ForegroundBackgroundRemover {
         case invalidImage
         case noForeground
         case renderFailed
-    }
-}
-
-private extension UIImage {
-    var hasTransparentPixels: Bool {
-        guard let alphaInfo = cgImage?.alphaInfo else { return false }
-        switch alphaInfo {
-        case .first, .last, .premultipliedFirst, .premultipliedLast:
-            return true
-        default:
-            return false
-        }
     }
 }
 
