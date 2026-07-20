@@ -53,10 +53,33 @@ struct PlayerDetailView: View {
                             .foregroundStyle(.secondary)
                             .lineLimit(1)
                     }
+
+                    if let profileLine {
+                        Text(profileLine)
+                            .font(.footnote.monospacedDigit())
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.7)
+                    }
                 }
             }
             .padding(.vertical, 4)
         }
+    }
+
+    // 生年月日(年齢)・身長・体重をまとめた1行。未設定の項目は出さない
+    private var profileLine: String? {
+        var parts: [String] = []
+        if let birthDate = player.birthDate {
+            let formatter = DateFormatter()
+            formatter.locale = Locale(identifier: "ja_JP")
+            formatter.dateFormat = "yyyy/M/d"
+            let age = Calendar.current.dateComponents([.year], from: birthDate, to: Date()).year
+            parts.append("\(formatter.string(from: birthDate))\(age.map { " (\($0)歳)" } ?? "")")
+        }
+        if let height = player.heightCm { parts.append("\(height)cm") }
+        if let weight = player.weightKg { parts.append("\(weight)kg") }
+        return parts.isEmpty ? nil : parts.joined(separator: "・")
     }
 
     // MARK: - 通算成績

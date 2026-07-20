@@ -49,6 +49,10 @@ struct BackupPlayer: Codable {
     // 読み(かな)と英語表記。古いバックアップには無い項目なので nil 許容。
     var nameKana: String?
     var nameRoman: String?
+    // プロフィール(生年月日・身長・体重)。同じく後付けの任意項目。
+    var birthDate: Date?
+    var heightCm: Int?
+    var weightKg: Int?
     var imageBase64: String?
 }
 
@@ -165,6 +169,9 @@ enum BackupManager {
                     name: player.name,
                     nameKana: player.nameKana,
                     nameRoman: player.nameRoman,
+                    birthDate: player.birthDate,
+                    heightCm: player.heightCm,
+                    weightKg: player.weightKg,
                     imageBase64: imageBase64(named: player.imagePath)
                 )
             },
@@ -283,6 +290,9 @@ enum BackupManager {
                 existing.name = item.name
                 existing.nameKana = item.nameKana
                 existing.nameRoman = item.nameRoman
+                existing.birthDate = item.birthDate
+                existing.heightCm = item.heightCm
+                existing.weightKg = item.weightKg
                 if let imagePath {
                     if let oldPath = existing.imagePath { ImageStorage.delete(named: oldPath) }
                     existing.imagePath = imagePath
@@ -295,7 +305,10 @@ enum BackupManager {
                     name: item.name,
                     nameKana: item.nameKana,
                     nameRoman: item.nameRoman,
-                    imagePath: imagePath
+                    imagePath: imagePath,
+                    birthDate: item.birthDate,
+                    heightCm: item.heightCm,
+                    weightKg: item.weightKg
                 ))
             }
             summary.players += 1

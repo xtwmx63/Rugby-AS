@@ -1450,6 +1450,9 @@ private struct PlayerCardEditorSheet: View {
     @State private var kanaText: String
     @State private var romanText: String
     @State private var numberText: String
+    @State private var birthDate: Date?
+    @State private var heightText: String
+    @State private var weightText: String
     @State private var photoPickerItem: PhotosPickerItem?
     @State private var isShowingPhotoDeleteConfirmation = false
     @State private var isRemovingBackground = false
@@ -1471,6 +1474,9 @@ private struct PlayerCardEditorSheet: View {
         self._kanaText = State(initialValue: player.nameKana ?? "")
         self._romanText = State(initialValue: player.nameRoman ?? "")
         self._numberText = State(initialValue: player.number.map(String.init) ?? "")
+        self._birthDate = State(initialValue: player.birthDate)
+        self._heightText = State(initialValue: player.heightCm.map(String.init) ?? "")
+        self._weightText = State(initialValue: player.weightKg.map(String.init) ?? "")
     }
 
     var body: some View {
@@ -1578,6 +1584,77 @@ private struct PlayerCardEditorSheet: View {
                     .autocorrectionDisabled()
                     .multilineTextAlignment(.trailing)
                     .foregroundStyle(.white)
+            }
+
+            Divider().overlay(Color.white.opacity(0.10))
+
+            fieldRow(title: "生年月日") {
+                if let currentBirthDate = birthDate {
+                    HStack(spacing: 6) {
+                        Spacer(minLength: 0)
+
+                        if let age = Self.age(from: currentBirthDate) {
+                            Text("\(age)歳")
+                                .font(.subheadline.weight(.bold).monospacedDigit())
+                                .foregroundStyle(accent)
+                        }
+
+                        DatePicker(
+                            "",
+                            selection: Binding(
+                                get: { currentBirthDate },
+                                set: { birthDate = $0 }
+                            ),
+                            displayedComponents: .date
+                        )
+                        .labelsHidden()
+                        .environment(\.locale, Locale(identifier: "ja_JP"))
+
+                        Button {
+                            birthDate = nil
+                        } label: {
+                            Image(systemName: "xmark.circle.fill")
+                                .foregroundStyle(.white.opacity(0.40))
+                        }
+                        .buttonStyle(.plain)
+                    }
+                } else {
+                    Button("未設定・タップで入力") {
+                        // 初期値は学生年代の目安。ホイールで実際の日付に合わせてもらう
+                        birthDate = Calendar.current.date(from: DateComponents(year: 2005, month: 4, day: 1))
+                    }
+                    .font(.subheadline)
+                    .foregroundStyle(.white.opacity(0.55))
+                    .frame(maxWidth: .infinity, alignment: .trailing)
+                }
+            }
+
+            Divider().overlay(Color.white.opacity(0.10))
+
+            fieldRow(title: "身長") {
+                HStack(spacing: 4) {
+                    TextField("未設定", text: $heightText)
+                        .keyboardType(.numberPad)
+                        .multilineTextAlignment(.trailing)
+                        .foregroundStyle(.white)
+                    Text("cm")
+                        .font(.subheadline)
+                        .foregroundStyle(.white.opacity(0.5))
+                }
+            }
+
+            Divider().overlay(Color.white.opacity(0.10))
+
+            fieldRow(title: "体重") {
+                HStack(spacing: 4) {
+                    TextField("未設定", text: $weightText)
+                        .keyboardType(.numberPad)
+                        .multilineTextAlignment(.trailing)
+                        .foregroundStyle(.white)
+                    Text("kg")
+                        .font(.subheadline)
+                        .foregroundStyle(.white.opacity(0.5))
+                }
             }
 
             Text("読み(かな)を入力すると英語表記が自動で入ります。カードの名前の下に表示されるので、綴りが違うときは英語表記を直接直してください。")
@@ -1723,8 +1800,21 @@ private struct PlayerCardEditorSheet: View {
             player.number = number
         }
 
+        player.birthDate = birthDate
+
+        let trimmedHeight = heightText.trimmingCharacters(in: .whitespacesAndNewlines)
+        player.heightCm = Int(trimmedHeight).flatMap { $0 > 0 ? $0 : nil }
+
+        let trimmedWeight = weightText.trimmingCharacters(in: .whitespacesAndNewlines)
+        player.weightKg = Int(trimmedWeight).flatMap { $0 > 0 ? $0 : nil }
+
         try? modelContext.save()
         dismiss()
+    }
+
+    // 生年月日から現在の満年齢を計算する
+    static func age(from birthDate: Date) -> Int? {
+        Calendar.current.dateComponents([.year], from: birthDate, to: Date()).year
     }
 
     private func handleSelectedPhoto(_ item: PhotosPickerItem?) {

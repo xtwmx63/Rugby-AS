@@ -40,6 +40,10 @@ final class Player {
     var nameRoman: String?
     // 顔写真のファイル名（ドキュメントディレクトリ配下）。nil で未設定。
     var imagePath: String?
+    // プロフィール(すべて任意)。年齢は生年月日から表示時に計算する。
+    var birthDate: Date?
+    var heightCm: Int?
+    var weightKg: Int?
 
     init(
         id: UUID = UUID(),
@@ -48,7 +52,10 @@ final class Player {
         name: String? = nil,
         nameKana: String? = nil,
         nameRoman: String? = nil,
-        imagePath: String? = nil
+        imagePath: String? = nil,
+        birthDate: Date? = nil,
+        heightCm: Int? = nil,
+        weightKg: Int? = nil
     ) {
         self.id = id
         self.teamID = teamID
@@ -57,6 +64,9 @@ final class Player {
         self.nameKana = nameKana
         self.nameRoman = nameRoman
         self.imagePath = imagePath
+        self.birthDate = birthDate
+        self.heightCm = heightCm
+        self.weightKg = weightKg
     }
 }
 
