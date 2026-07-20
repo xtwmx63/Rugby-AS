@@ -69,12 +69,7 @@ struct V3RecordingView: View {
 
     private let homeAccent = Color.blue
     private let awayAccent = Color.red
-    private let fieldBackground = Color(red: 0.02, green: 0.06, blue: 0.10)
     private let cardBackground = Color(red: 0.04, green: 0.12, blue: 0.18)
-    // 「コンバージョン」など長い文字でも縮まないよう、6 種のラベルと回数表示は
-    // 固定サイズで揃える。1 行に収まる範囲で十分大きいサイズを選定。
-    private let actionLabelFont: Font = .system(size: 14, weight: .bold)
-    private let actionCountFont: Font = .system(size: 22, weight: .bold).monospacedDigit()
 
     private var selectedTeamPlayers: [Player] {
         allPlayers
@@ -160,7 +155,15 @@ struct V3RecordingView: View {
 
     var body: some View {
         ZStack(alignment: .bottom) {
-            fieldBackground.ignoresSafeArea()
+            LinearGradient(
+                colors: [
+                    Color(red: 0.01, green: 0.03, blue: 0.08),
+                    Color(red: 0.04, green: 0.09, blue: 0.18)
+                ],
+                startPoint: .top,
+                endPoint: .bottom
+            )
+            .ignoresSafeArea()
 
             VStack(spacing: 8) {
                 topBar
@@ -333,17 +336,17 @@ struct V3RecordingView: View {
 
                 VStack(spacing: 4) {
                     Text("\(score(for: match.homeTeamID)) - \(score(for: match.awayTeamID))")
-                        .font(.system(size: 34, weight: .bold, design: .rounded))
+                        .font(.system(size: 50, weight: .bold, design: .rounded))
                         .foregroundStyle(.white)
                         .lineLimit(1)
-                        .minimumScaleFactor(0.6)
+                        .minimumScaleFactor(0.5)
 
-                    HStack(spacing: 10) {
+                    HStack(spacing: 12) {
                         halfScoreLabel("1ST", half: 0)
                         halfScoreLabel("2ND", half: 1)
                     }
-                    .font(.caption2.monospacedDigit())
-                    .foregroundStyle(.white.opacity(0.72))
+                    .font(.footnote.weight(.semibold).monospacedDigit())
+                    .foregroundStyle(.white.opacity(0.78))
                 }
             }
 
@@ -363,10 +366,10 @@ struct V3RecordingView: View {
         ZStack {
             TimelineView(.periodic(from: .now, by: 1)) { context in
                 Text(timeState.elapsedText(at: context.date))
-                    .font(.system(size: 30, weight: .bold, design: .monospaced))
+                    .font(.system(size: 44, weight: .bold, design: .monospaced))
                     .foregroundStyle(.white)
                     .lineLimit(1)
-                    .minimumScaleFactor(0.55)
+                    .minimumScaleFactor(0.5)
             }
 
             HStack(spacing: 12) {
@@ -375,27 +378,39 @@ struct V3RecordingView: View {
                         isShowingHalfChangeConfirmation = true
                     }
                 }
-                .font(.headline.weight(.bold))
+                .font(.system(size: 17, weight: .bold))
                 .foregroundStyle(homeAccent)
-                .frame(width: 64, height: 40)
+                .frame(width: 72, height: 50)
                 .background(Color.white.opacity(0.06))
-                .clipShape(RoundedRectangle(cornerRadius: 8))
+                .clipShape(RoundedRectangle(cornerRadius: 12))
                 .overlay(
-                    RoundedRectangle(cornerRadius: 8)
-                        .stroke(Color.white.opacity(0.12), lineWidth: 1)
+                    RoundedRectangle(cornerRadius: 12)
+                        .stroke(Color.white.opacity(0.14), lineWidth: 1)
                 )
                 .disabled(isSecondHalf)
 
                 Spacer(minLength: 0)
 
-                Button(timeState.isRunning ? "停止" : "開始") {
+                Button {
                     toggleTime()
+                } label: {
+                    Label(
+                        timeState.isRunning ? "停止" : "開始",
+                        systemImage: timeState.isRunning ? "pause.fill" : "play.fill"
+                    )
+                    .font(.system(size: 17, weight: .bold))
+                    .foregroundStyle(.white)
+                    .frame(width: 108, height: 50)
+                    .background(
+                        LinearGradient(
+                            colors: [homeAccent, homeAccent.opacity(0.72)],
+                            startPoint: .top,
+                            endPoint: .bottom
+                        )
+                    )
+                    .clipShape(RoundedRectangle(cornerRadius: 12))
                 }
-                .font(.headline.weight(.bold))
-                .foregroundStyle(.white)
-                .frame(width: 88, height: 44)
-                .background(homeAccent)
-                .clipShape(RoundedRectangle(cornerRadius: 8))
+                .buttonStyle(.plain)
             }
         }
         .padding(10)
@@ -429,12 +444,12 @@ struct V3RecordingView: View {
                     .frame(width: 96, alignment: alignment == .leading ? .leading : .trailing)
 
                 Text(label)
-                    .font(.caption2.weight(.black))
+                    .font(.system(size: 14, weight: .black))
                     .foregroundStyle(isSelected ? .white : accent)
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 2)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 4)
                     .background(isSelected ? accent : accent.opacity(0.18))
-                    .clipShape(RoundedRectangle(cornerRadius: 4))
+                    .clipShape(RoundedRectangle(cornerRadius: 8))
             }
             .opacity(isSelected ? 1 : 0.55)
             .contentShape(Rectangle())
@@ -493,11 +508,22 @@ struct V3RecordingView: View {
     // 起点ボタンの列。スクロールさせず全ボタンを等幅で並べる
     // (横スクロールにすると HOME/AWAY 切替スワイプと衝突するため)。
     private func originChipRow(selectedRaw: String?, onSelect: @escaping (String?) -> Void) -> some View {
-        HStack(spacing: 5) {
+        HStack(spacing: 6) {
             Text("起点")
-                .font(.caption.weight(.black))
-                .foregroundStyle(.white.opacity(0.55))
-                .frame(width: 28)
+                .font(.system(size: 15, weight: .black))
+                .foregroundStyle(.white)
+                .lineLimit(1)
+                .fixedSize(horizontal: true, vertical: false)
+                .padding(.horizontal, 10)
+                .frame(minHeight: 50)
+                .background(
+                    LinearGradient(
+                        colors: [Color.blue.opacity(0.85), Color.blue.opacity(0.55)],
+                        startPoint: .top,
+                        endPoint: .bottom
+                    )
+                )
+                .clipShape(RoundedRectangle(cornerRadius: 12))
 
             ForEach(PlayOrigin.allCases) { origin in
                 let isSelected = selectedRaw == origin.rawValue
@@ -505,15 +531,15 @@ struct V3RecordingView: View {
                     onSelect(isSelected ? nil : origin.rawValue)
                 } label: {
                     Text(origin.shortName)
-                        .font(.subheadline.weight(.black))
+                        .font(.system(size: 16, weight: .black))
                         .foregroundStyle(isSelected ? .white : .white.opacity(0.66))
                         .lineLimit(1)
-                        .minimumScaleFactor(0.55)
-                        .frame(maxWidth: .infinity, minHeight: 40)
-                        .background(isSelected ? Color.teal.opacity(0.85) : Color.white.opacity(0.08))
-                        .clipShape(RoundedRectangle(cornerRadius: 8))
+                        .minimumScaleFactor(0.5)
+                        .frame(maxWidth: .infinity, minHeight: 50)
+                        .background(isSelected ? Color.teal.opacity(0.85) : Color.white.opacity(0.07))
+                        .clipShape(RoundedRectangle(cornerRadius: 12))
                         .overlay(
-                            RoundedRectangle(cornerRadius: 8)
+                            RoundedRectangle(cornerRadius: 12)
                                 .stroke(isSelected ? Color.teal : Color.white.opacity(0.14), lineWidth: 1)
                         )
                 }
@@ -558,27 +584,28 @@ struct V3RecordingView: View {
 
                 TimelineView(.periodic(from: .now, by: 1)) { context in
                     Text(state.elapsedText(at: context.date))
-                        .font(.system(size: 24, weight: .bold, design: .monospaced))
+                        .font(.system(size: 26, weight: .bold, design: .monospaced))
                         .foregroundStyle(.white)
                         .minimumScaleFactor(0.55)
                 }
 
                 Text(isRunning ? "計測中・タップで停止" : "タップで開始")
                     .font(.caption2.weight(.bold))
-                    .foregroundStyle(isRunning ? .white : .white.opacity(0.5))
+                    .foregroundStyle(isRunning ? accent : .white.opacity(0.5))
                     .lineLimit(1)
                     .minimumScaleFactor(0.6)
             }
-            .padding(.vertical, 8)
+            .padding(.vertical, 10)
             .padding(.horizontal, 6)
             .frame(maxWidth: .infinity)
-            .background(isRunning ? accent.opacity(0.45) : Color.black.opacity(0.18))
-            .clipShape(RoundedRectangle(cornerRadius: 8))
+            .background(isRunning ? accent.opacity(0.16) : Color.black.opacity(0.18))
+            .clipShape(RoundedRectangle(cornerRadius: 12))
             .overlay(
-                RoundedRectangle(cornerRadius: 8)
+                RoundedRectangle(cornerRadius: 12)
                     .stroke(isRunning ? accent : Color.white.opacity(0.08), lineWidth: isRunning ? 2 : 1)
             )
-            .contentShape(RoundedRectangle(cornerRadius: 8))
+            .shadow(color: isRunning ? accent.opacity(0.35) : .clear, radius: 6)
+            .contentShape(RoundedRectangle(cornerRadius: 12))
         }
         .buttonStyle(.plain)
         .disabled(isDisabled)
@@ -586,7 +613,7 @@ struct V3RecordingView: View {
     }
 
     private var actionGrid: some View {
-        LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 8) {
+        LazyVGrid(columns: [GridItem(.flexible(), spacing: 10), GridItem(.flexible())], spacing: 10) {
             scoringCard(.tryScore, accent: .green, symbol: "rugbyball")
             scoringCard(.conversion, accent: .purple, symbol: "figure.rugby")
             scoringCard(.penaltyGoal, accent: .blue, symbol: "p.circle")
@@ -602,37 +629,59 @@ struct V3RecordingView: View {
         Button {
             recordScore(category)
         } label: {
-            VStack(alignment: .leading, spacing: 6) {
-                HStack(spacing: 10) {
-                    Image(systemName: symbol)
-                        .font(.title3.weight(.bold))
-                        .frame(width: 26)
-                    Text(category.displayName)
-                        .font(actionLabelFont)
-                        .lineLimit(1)
-                    Spacer(minLength: 0)
-                }
-
-                HStack {
-                    Spacer()
-                    Text("\(countEvents(category: category.rawValue))")
-                        .font(actionCountFont)
-                        .lineLimit(1)
-                }
-            }
-            .foregroundStyle(.white)
-            .padding(.horizontal, 12)
-            .padding(.vertical, 8)
-            .frame(maxWidth: .infinity)
-            .frame(height: 68)
-            .background(accent.opacity(0.72))
-            .clipShape(RoundedRectangle(cornerRadius: 8))
-            .overlay(
-                RoundedRectangle(cornerRadius: 8)
-                    .stroke(accent.opacity(0.8), lineWidth: 1)
+            actionRowLabel(
+                title: category.displayName,
+                symbol: symbol,
+                countText: "\(countEvents(category: category.rawValue))",
+                accent: accent
             )
         }
         .buttonStyle(.plain)
+    }
+
+    // 1行型のアクションボタン共通レイアウト:
+    // [丸アイコン] 名前 …… 回数 >
+    private func actionRowLabel(title: String, symbol: String, countText: String, accent: Color) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: symbol)
+                .font(.system(size: 14, weight: .bold))
+                .frame(width: 30, height: 30)
+                .background(Color.white.opacity(0.18))
+                .clipShape(Circle())
+
+            Text(title)
+                .font(.system(size: 15, weight: .bold))
+                .lineLimit(1)
+                .minimumScaleFactor(0.45)
+
+            Spacer(minLength: 2)
+
+            Text(countText)
+                .font(.system(size: 20, weight: .bold).monospacedDigit())
+                .lineLimit(1)
+                .minimumScaleFactor(0.6)
+
+            Image(systemName: "chevron.right")
+                .font(.system(size: 12, weight: .bold))
+                .foregroundStyle(.white.opacity(0.55))
+        }
+        .foregroundStyle(.white)
+        .padding(.horizontal, 12)
+        .frame(maxWidth: .infinity)
+        .frame(height: 62)
+        .background(
+            LinearGradient(
+                colors: [accent.opacity(0.92), accent.opacity(0.55)],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            )
+        )
+        .clipShape(RoundedRectangle(cornerRadius: 14))
+        .overlay(
+            RoundedRectangle(cornerRadius: 14)
+                .stroke(Color.white.opacity(0.16), lineWidth: 1)
+        )
+        .shadow(color: Color.black.opacity(0.25), radius: 5, y: 3)
     }
 
     private func setPieceRow(title: String, category: String, symbol: String, accent: Color) -> some View {
@@ -652,35 +701,11 @@ struct V3RecordingView: View {
                 half: currentHalf
             )
         } label: {
-            VStack(alignment: .leading, spacing: 6) {
-                HStack(spacing: 10) {
-                    Image(systemName: symbol)
-                        .font(.title3.weight(.bold))
-                        .frame(width: 26)
-
-                    Text(title)
-                        .font(actionLabelFont)
-                        .lineLimit(1)
-                    Spacer(minLength: 0)
-                }
-
-                HStack {
-                    Spacer()
-                    Text("\(successCount)/\(totalCount)")
-                        .font(actionCountFont)
-                        .lineLimit(1)
-                }
-            }
-            .foregroundStyle(.white)
-            .padding(.horizontal, 12)
-            .padding(.vertical, 8)
-            .frame(maxWidth: .infinity)
-            .frame(height: 68)
-            .background(accent.opacity(0.58))
-            .clipShape(RoundedRectangle(cornerRadius: 8))
-            .overlay(
-                RoundedRectangle(cornerRadius: 8)
-                    .stroke(accent.opacity(0.75), lineWidth: 1)
+            actionRowLabel(
+                title: title,
+                symbol: symbol,
+                countText: "\(successCount)/\(totalCount)",
+                accent: accent
             )
         }
         .buttonStyle(.plain)
@@ -690,12 +715,22 @@ struct V3RecordingView: View {
         Button {
             undoLastEvent()
         } label: {
-            Text("取り消し")
-                .font(.headline.weight(.bold))
-                .foregroundStyle(.red)
-                .frame(maxWidth: .infinity, minHeight: 36)
-                .background(Color.red.opacity(0.18))
-                .clipShape(RoundedRectangle(cornerRadius: 8))
+            Label("取り消し", systemImage: "trash.fill")
+                .font(.system(size: 16, weight: .bold))
+                .foregroundStyle(.white)
+                .frame(maxWidth: .infinity, minHeight: 52)
+                .background(
+                    LinearGradient(
+                        colors: [Color(red: 0.72, green: 0.14, blue: 0.18), Color(red: 0.45, green: 0.08, blue: 0.12)],
+                        startPoint: .top,
+                        endPoint: .bottom
+                    )
+                )
+                .clipShape(RoundedRectangle(cornerRadius: 14))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 14)
+                        .stroke(Color.white.opacity(0.14), lineWidth: 1)
+                )
         }
         .buttonStyle(.plain)
         .disabled(undoableLastEvent == nil)
@@ -708,11 +743,21 @@ struct V3RecordingView: View {
             recordPenalty()
         } label: {
             Label("反則 \(penaltyCount)", systemImage: "flag.fill")
-                .font(.headline.weight(.bold))
-                .foregroundStyle(.orange)
-                .frame(maxWidth: .infinity, minHeight: 36)
-                .background(Color.orange.opacity(0.16))
-                .clipShape(RoundedRectangle(cornerRadius: 8))
+                .font(.system(size: 16, weight: .bold))
+                .foregroundStyle(.white)
+                .frame(maxWidth: .infinity, minHeight: 52)
+                .background(
+                    LinearGradient(
+                        colors: [Color(red: 0.85, green: 0.48, blue: 0.10), Color(red: 0.58, green: 0.30, blue: 0.05)],
+                        startPoint: .top,
+                        endPoint: .bottom
+                    )
+                )
+                .clipShape(RoundedRectangle(cornerRadius: 14))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 14)
+                        .stroke(Color.white.opacity(0.14), lineWidth: 1)
+                )
         }
         .buttonStyle(.plain)
     }
@@ -723,11 +768,21 @@ struct V3RecordingView: View {
             isSubstitutionSheetPresented = true
         } label: {
             Label("交代", systemImage: "arrow.left.arrow.right")
-                .font(.headline.weight(.bold))
+                .font(.system(size: 16, weight: .bold))
                 .foregroundStyle(.cyan)
-                .frame(maxWidth: .infinity, minHeight: 36)
-                .background(Color.cyan.opacity(0.16))
-                .clipShape(RoundedRectangle(cornerRadius: 8))
+                .frame(maxWidth: .infinity, minHeight: 52)
+                .background(
+                    LinearGradient(
+                        colors: [Color(red: 0.10, green: 0.20, blue: 0.36), Color(red: 0.05, green: 0.12, blue: 0.24)],
+                        startPoint: .top,
+                        endPoint: .bottom
+                    )
+                )
+                .clipShape(RoundedRectangle(cornerRadius: 14))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 14)
+                        .stroke(Color.cyan.opacity(0.35), lineWidth: 1)
+                )
         }
         .buttonStyle(.plain)
     }
@@ -1554,12 +1609,22 @@ private struct V3TimerState {
 private extension View {
     func recordingCardBackground() -> some View {
         self
-            .background(Color(red: 0.04, green: 0.12, blue: 0.18).opacity(0.96))
-            .clipShape(RoundedRectangle(cornerRadius: 10))
+            .background(
+                LinearGradient(
+                    colors: [
+                        Color(red: 0.07, green: 0.13, blue: 0.24),
+                        Color(red: 0.03, green: 0.07, blue: 0.14)
+                    ],
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
+            )
+            .clipShape(RoundedRectangle(cornerRadius: 16))
             .overlay(
-                RoundedRectangle(cornerRadius: 10)
+                RoundedRectangle(cornerRadius: 16)
                     .stroke(Color.white.opacity(0.10), lineWidth: 1)
             )
+            .shadow(color: Color.black.opacity(0.30), radius: 6, y: 3)
     }
 }
 
