@@ -362,56 +362,57 @@ struct V3RecordingView: View {
 
     // 試合時間の枠。時間を ZStack の中央に固定し、前半/後半トグルと開始/停止は
     // 左右の端に載せる。ボタンの幅が違っても時間が画面中央(縦軸)からずれない。
+    // 左右のボタンを同じ幅の枠に入れることで、中央の時間が
+    // 画面中央からずれず、大きくしてもボタンに重ならないようにする。
     private var clockCard: some View {
-        ZStack {
+        HStack(spacing: 8) {
+            Button(isSecondHalf ? "後半" : "前半") {
+                if !isSecondHalf {
+                    isShowingHalfChangeConfirmation = true
+                }
+            }
+            .font(.system(size: 17, weight: .bold))
+            .foregroundStyle(homeAccent)
+            .frame(width: 72, height: 50)
+            .background(Color.white.opacity(0.06))
+            .clipShape(RoundedRectangle(cornerRadius: 12))
+            .overlay(
+                RoundedRectangle(cornerRadius: 12)
+                    .stroke(Color.white.opacity(0.14), lineWidth: 1)
+            )
+            .disabled(isSecondHalf)
+            .frame(width: 104, alignment: .leading)
+
             TimelineView(.periodic(from: .now, by: 1)) { context in
                 Text(timeState.elapsedText(at: context.date))
-                    .font(.system(size: 44, weight: .bold, design: .monospaced))
+                    .font(.system(size: 38, weight: .bold, design: .monospaced))
                     .foregroundStyle(.white)
                     .lineLimit(1)
-                    .minimumScaleFactor(0.5)
+                    .minimumScaleFactor(0.4)
+                    .frame(maxWidth: .infinity)
             }
 
-            HStack(spacing: 12) {
-                Button(isSecondHalf ? "後半" : "前半") {
-                    if !isSecondHalf {
-                        isShowingHalfChangeConfirmation = true
-                    }
-                }
-                .font(.system(size: 17, weight: .bold))
-                .foregroundStyle(homeAccent)
-                .frame(width: 72, height: 50)
-                .background(Color.white.opacity(0.06))
-                .clipShape(RoundedRectangle(cornerRadius: 12))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 12)
-                        .stroke(Color.white.opacity(0.14), lineWidth: 1)
+            Button {
+                toggleTime()
+            } label: {
+                Label(
+                    timeState.isRunning ? "停止" : "開始",
+                    systemImage: timeState.isRunning ? "pause.fill" : "play.fill"
                 )
-                .disabled(isSecondHalf)
-
-                Spacer(minLength: 0)
-
-                Button {
-                    toggleTime()
-                } label: {
-                    Label(
-                        timeState.isRunning ? "停止" : "開始",
-                        systemImage: timeState.isRunning ? "pause.fill" : "play.fill"
+                .font(.system(size: 17, weight: .bold))
+                .foregroundStyle(.white)
+                .frame(width: 104, height: 50)
+                .background(
+                    LinearGradient(
+                        colors: [homeAccent, homeAccent.opacity(0.72)],
+                        startPoint: .top,
+                        endPoint: .bottom
                     )
-                    .font(.system(size: 17, weight: .bold))
-                    .foregroundStyle(.white)
-                    .frame(width: 108, height: 50)
-                    .background(
-                        LinearGradient(
-                            colors: [homeAccent, homeAccent.opacity(0.72)],
-                            startPoint: .top,
-                            endPoint: .bottom
-                        )
-                    )
-                    .clipShape(RoundedRectangle(cornerRadius: 12))
-                }
-                .buttonStyle(.plain)
+                )
+                .clipShape(RoundedRectangle(cornerRadius: 12))
             }
+            .buttonStyle(.plain)
+            .frame(width: 104, alignment: .trailing)
         }
         .padding(10)
         .recordingCardBackground()
@@ -604,7 +605,6 @@ struct V3RecordingView: View {
                 RoundedRectangle(cornerRadius: 12)
                     .stroke(isRunning ? accent : Color.white.opacity(0.08), lineWidth: isRunning ? 2 : 1)
             )
-            .shadow(color: isRunning ? accent.opacity(0.35) : .clear, radius: 6)
             .contentShape(RoundedRectangle(cornerRadius: 12))
         }
         .buttonStyle(.plain)
@@ -681,7 +681,6 @@ struct V3RecordingView: View {
             RoundedRectangle(cornerRadius: 14)
                 .stroke(Color.white.opacity(0.16), lineWidth: 1)
         )
-        .shadow(color: Color.black.opacity(0.25), radius: 5, y: 3)
     }
 
     private func setPieceRow(title: String, category: String, symbol: String, accent: Color) -> some View {
@@ -1624,7 +1623,6 @@ private extension View {
                 RoundedRectangle(cornerRadius: 16)
                     .stroke(Color.white.opacity(0.10), lineWidth: 1)
             )
-            .shadow(color: Color.black.opacity(0.30), radius: 6, y: 3)
     }
 }
 
