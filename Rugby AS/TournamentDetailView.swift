@@ -20,8 +20,12 @@ struct TournamentDetailView: View {
     @Query private var teams: [Team]
     @Query(sort: \Player.number) private var players: [Player]
 
+    @State private var isEditorPresented = false
+
     var body: some View {
         List {
+            overviewSection
+            participatingTeamsSection
             standingsSection
             rankingSection(
                 title: "トライランキング",
@@ -41,6 +45,14 @@ struct TournamentDetailView: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
+                Button {
+                    isEditorPresented = true
+                } label: {
+                    Image(systemName: "slider.horizontal.3")
+                }
+                .accessibilityLabel("この大会を編集")
+            }
+            ToolbarItem(placement: .topBarTrailing) {
                 ShareLink(
                     item: TournamentCSVExportRequest(
                         container: modelContext.container,
@@ -54,6 +66,106 @@ struct TournamentDetailView: View {
                 .disabled(tournamentMatches.isEmpty)
                 .accessibilityLabel("この大会のCSVを書き出す")
             }
+        }
+        .sheet(isPresented: $isEditorPresented) {
+            TournamentEditorView(tournament: tournament)
+        }
+    }
+
+    // MARK: - 大会の概要（ロゴ・年度・形式）
+
+    private var overviewSection: some View {
+        Section {
+            HStack(spacing: 14) {
+                logoView
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(tournament.officialName)
+                        .font(.headline)
+                    HStack(spacing: 6) {
+                        if let year = tournament.year {
+                            metaChip("\(String(year))年度")
+                        }
+                        if let variant = RugbyVariant.displayName(for: tournament.variantRaw) {
+                            metaChip(variant)
+                        }
+                        if let format = TournamentFormat.displayName(for: tournament.formatRaw) {
+                            metaChip(format)
+                        }
+                    }
+                }
+                Spacer()
+            }
+            .padding(.vertical, 4)
+        }
+    }
+
+    @ViewBuilder
+    private var logoView: some View {
+        if let name = tournament.logoPath, let uiImage = ImageStorage.image(named: name) {
+            Image(uiImage: uiImage)
+                .resizable()
+                .scaledToFill()
+                .frame(width: 56, height: 56)
+                .clipShape(RoundedRectangle(cornerRadius: 12))
+        } else {
+            Image(systemName: "trophy.fill")
+                .font(.title2)
+                .foregroundStyle(.yellow)
+                .frame(width: 56, height: 56)
+                .background(Color.secondary.opacity(0.12))
+                .clipShape(RoundedRectangle(cornerRadius: 12))
+        }
+    }
+
+    private func metaChip(_ text: String) -> some View {
+        Text(text)
+            .font(.caption.weight(.semibold))
+            .padding(.horizontal, 8)
+            .padding(.vertical, 3)
+            .background(Color.secondary.opacity(0.15))
+            .clipShape(Capsule())
+    }
+
+    // MARK: - 出場チーム
+
+    @ViewBuilder
+    private var participatingTeamsSection: some View {
+        let entered = teams
+            .filter { tournament.teamIDs.contains($0.id) }
+            .sorted { $0.name < $1.name }
+
+        if !entered.isEmpty {
+            Section {
+                ForEach(entered) { team in
+                    HStack(spacing: 10) {
+                        teamThumbnail(for: team)
+                        Text(team.name)
+                        if let category = team.category, !category.isEmpty {
+                            Text(category)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                }
+            } header: {
+                Label("出場チーム（\(entered.count)）", systemImage: "person.3.fill")
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func teamThumbnail(for team: Team) -> some View {
+        if let name = team.logoPath, let uiImage = ImageStorage.image(named: name) {
+            Image(uiImage: uiImage)
+                .resizable()
+                .scaledToFill()
+                .frame(width: 28, height: 28)
+                .clipShape(RoundedRectangle(cornerRadius: 6))
+        } else {
+            Image(systemName: "shield.fill")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .frame(width: 28, height: 28)
         }
     }
 

@@ -62,8 +62,7 @@ struct TournamentListView: View {
     @Query(sort: \Tournament.officialName) private var tournaments: [Tournament]
     @Query private var matches: [Match]
 
-    @State private var isAddAlertPresented = false
-    @State private var newTournamentName = ""
+    @State private var editingTournament: Tournament?
     @State private var tournamentPendingDeletion: Tournament?
     @State private var deletionBlockedTournament: Tournament?
 
@@ -77,12 +76,16 @@ struct TournamentListView: View {
                         description: Text("右上の＋から大会を追加します。")
                     )
                 } else {
-                    Section {
-                        ForEach(tournaments) { tournament in
-                            tournamentRow(tournament)
+                    // 同じ名前の大会を1つのフォルダにまとめ、年度の新しい順に並べる。
+                    // これで「〇〇大会」の各年度（過去の年度）が一箇所に集まる。
+                    ForEach(groupedTournaments, id: \.name) { group in
+                        Section {
+                            ForEach(group.editions) { tournament in
+                                tournamentRow(tournament)
+                            }
+                        } header: {
+                            Text(group.name)
                         }
-                    } footer: {
-                        Text("大会をタップすると、順位表・ランキング・試合一覧を確認できます。CSV書き出しは大会の詳細画面から。")
                     }
                 }
             }
@@ -96,22 +99,15 @@ struct TournamentListView: View {
                 }
                 ToolbarItem(placement: .topBarTrailing) {
                     Button {
-                        newTournamentName = ""
-                        isAddAlertPresented = true
+                        addTournament()
                     } label: {
                         Image(systemName: "plus")
                     }
                     .accessibilityLabel("大会を追加")
                 }
             }
-            .alert("大会を追加", isPresented: $isAddAlertPresented) {
-                TextField("大会の正式名称", text: $newTournamentName)
-                Button("追加") {
-                    addTournament()
-                }
-                Button("キャンセル", role: .cancel) {}
-            } message: {
-                Text("大会の正式名称を入力してください。")
+            .sheet(item: $editingTournament) { tournament in
+                TournamentEditorView(tournament: tournament)
             }
             .confirmationDialog(
                 "この大会を削除しますか？",
@@ -152,6 +148,17 @@ struct TournamentListView: View {
         }
     }
 
+    // 同名の大会をまとめ、フォルダ（＝大会名）ごとに年度の新しい順で並べる
+    private var groupedTournaments: [(name: String, editions: [Tournament])] {
+        let grouped = Dictionary(grouping: tournaments) { $0.officialName }
+        return grouped.keys.sorted().map { name in
+            let editions = (grouped[name] ?? []).sorted {
+                ($0.year ?? Int.min) > ($1.year ?? Int.min)
+            }
+            return (name: name, editions: editions)
+        }
+    }
+
     private func tournamentRow(_ tournament: Tournament) -> some View {
         let matchCount = matches.count { $0.tournamentID == tournament.id }
 
@@ -159,30 +166,64 @@ struct TournamentListView: View {
             TournamentDetailView(tournament: tournament)
         } label: {
             HStack(spacing: 10) {
-                Image(systemName: "trophy.fill")
-                    .foregroundStyle(.yellow)
-                    .frame(width: 24)
+                logoThumbnail(for: tournament)
 
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(tournament.officialName)
-                    Text("\(matchCount)試合")
-                        .font(.caption)
+                    // 同名でも年度で区別できるよう、年度があれば見出しに出す
+                    Text(tournament.year.map { "\(String($0))年度" } ?? tournament.officialName)
+                        .font(.headline)
+                    HStack(spacing: 6) {
+                        if let variant = RugbyVariant.displayName(for: tournament.variantRaw) {
+                            Text(variant)
+                        }
+                        Text("\(tournament.teamIDs.count)チーム・\(matchCount)試合")
+                    }
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                }
+
+                Spacer()
+
+                Button {
+                    editingTournament = tournament
+                } label: {
+                    Image(systemName: "slider.horizontal.3")
                         .foregroundStyle(.secondary)
                 }
+                .buttonStyle(.borderless)
             }
         }
         .swipeActions(edge: .trailing, allowsFullSwipe: false) {
             Button("削除", role: .destructive) {
                 requestDeletion(of: tournament)
             }
+            Button("編集") {
+                editingTournament = tournament
+            }
+            .tint(.blue)
+        }
+    }
+
+    @ViewBuilder
+    private func logoThumbnail(for tournament: Tournament) -> some View {
+        if let name = tournament.logoPath, let uiImage = ImageStorage.image(named: name) {
+            Image(uiImage: uiImage)
+                .resizable()
+                .scaledToFill()
+                .frame(width: 34, height: 34)
+                .clipShape(RoundedRectangle(cornerRadius: 8))
+        } else {
+            Image(systemName: "trophy.fill")
+                .foregroundStyle(.yellow)
+                .frame(width: 34, height: 34)
         }
     }
 
     private func addTournament() {
-        let name = newTournamentName.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !name.isEmpty else { return }
-        modelContext.insert(Tournament(officialName: name))
+        let tournament = Tournament(officialName: "新しい大会")
+        modelContext.insert(tournament)
         try? modelContext.save()
+        editingTournament = tournament
     }
 
     private func requestDeletion(of tournament: Tournament) {
