@@ -37,6 +37,8 @@ struct BackupTeam: Codable {
     var id: UUID
     var name: String
     var colorHex: String?
+    // フォルダ分けのカテゴリー。古いバックアップには無いので任意。
+    var category: String?
     var logoImageBase64: String?
 }
 
@@ -59,6 +61,12 @@ struct BackupPlayer: Codable {
 struct BackupTournament: Codable {
     var id: UUID
     var officialName: String
+    // 以下は後から足した任意項目。古いバックアップには無いので nil/欠落を許容。
+    var year: Int?
+    var variantRaw: String?
+    var formatRaw: String?
+    var teamIDs: [UUID]?
+    var logoImageBase64: String?
 }
 
 struct BackupMatch: Codable {
@@ -158,6 +166,7 @@ enum BackupManager {
                     id: team.id,
                     name: team.name,
                     colorHex: team.colorHex,
+                    category: team.category,
                     logoImageBase64: imageBase64(named: team.logoPath)
                 )
             },
@@ -175,7 +184,17 @@ enum BackupManager {
                     imageBase64: imageBase64(named: player.imagePath)
                 )
             },
-            tournaments: tournaments.map { BackupTournament(id: $0.id, officialName: $0.officialName) },
+            tournaments: tournaments.map {
+                BackupTournament(
+                    id: $0.id,
+                    officialName: $0.officialName,
+                    year: $0.year,
+                    variantRaw: $0.variantRaw,
+                    formatRaw: $0.formatRaw,
+                    teamIDs: $0.teamIDs,
+                    logoImageBase64: imageBase64(named: $0.logoPath)
+                )
+            },
             matches: matches.map {
                 BackupMatch(
                     id: $0.id,
@@ -267,13 +286,14 @@ enum BackupManager {
             if let existing = existingTeams[item.id] {
                 existing.name = item.name
                 existing.colorHex = item.colorHex
+                existing.category = item.category
                 if let logoPath {
                     // 新しい写真に差し替えるときは、古いファイルを消して二重を防ぐ
                     if let oldPath = existing.logoPath { ImageStorage.delete(named: oldPath) }
                     existing.logoPath = logoPath
                 }
             } else {
-                context.insert(Team(id: item.id, name: item.name, logoPath: logoPath, colorHex: item.colorHex))
+                context.insert(Team(id: item.id, name: item.name, logoPath: logoPath, colorHex: item.colorHex, category: item.category))
             }
             summary.teams += 1
         }
@@ -319,10 +339,27 @@ enum BackupManager {
             uniqueKeysWithValues: try context.fetch(FetchDescriptor<Tournament>()).map { ($0.id, $0) }
         )
         for item in backup.tournaments {
+            let logoPath = savedImageName(fromBase64: item.logoImageBase64)
             if let existing = existingTournaments[item.id] {
                 existing.officialName = item.officialName
+                existing.year = item.year
+                existing.variantRaw = item.variantRaw
+                existing.formatRaw = item.formatRaw
+                existing.teamIDs = item.teamIDs ?? existing.teamIDs
+                if let logoPath {
+                    if let oldPath = existing.logoPath { ImageStorage.delete(named: oldPath) }
+                    existing.logoPath = logoPath
+                }
             } else {
-                context.insert(Tournament(id: item.id, officialName: item.officialName))
+                context.insert(Tournament(
+                    id: item.id,
+                    officialName: item.officialName,
+                    year: item.year,
+                    logoPath: logoPath,
+                    variantRaw: item.variantRaw,
+                    formatRaw: item.formatRaw,
+                    teamIDs: item.teamIDs ?? []
+                ))
             }
             summary.tournaments += 1
         }

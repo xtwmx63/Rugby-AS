@@ -17,12 +17,16 @@ final class Team {
     // チームカラーの 16 進カラーコード（"#RRGGBB"）。nil ならサマリー側で
     // HOME/AWAY 既定色（青/赤）にフォールバック。
     var colorHex: String?
+    // フォルダ分け用の自由なカテゴリー名（"男子" "女子" "大学" など）。
+    // nil/空 は「未分類」として扱う。
+    var category: String?
 
-    init(id: UUID = UUID(), name: String, logoPath: String? = nil, colorHex: String? = nil) {
+    init(id: UUID = UUID(), name: String, logoPath: String? = nil, colorHex: String? = nil, category: String? = nil) {
         self.id = id
         self.name = name
         self.logoPath = logoPath
         self.colorHex = colorHex
+        self.category = category
     }
 }
 
@@ -74,10 +78,33 @@ final class Player {
 final class Tournament {
     @Attribute(.unique) var id: UUID
     var officialName: String
+    // 年度（西暦）。同じ名前の大会を年ごとに束ねて「過去の年度」を見るのに使う。nil=未設定。
+    var year: Int?
+    // 大会ロゴ画像のファイル名（ドキュメントディレクトリ配下）。nil で未設定。
+    var logoPath: String?
+    // 7人制/15人制（RugbyVariant の rawValue）。nil=未設定。
+    var variantRaw: String?
+    // フォーマット（TournamentFormat の rawValue）。nil=未設定。
+    var formatRaw: String?
+    // この大会に出場するチームの id 一覧。試合の有無に関係なく事前登録できる。
+    var teamIDs: [UUID] = []
 
-    init(id: UUID = UUID(), officialName: String) {
+    init(
+        id: UUID = UUID(),
+        officialName: String,
+        year: Int? = nil,
+        logoPath: String? = nil,
+        variantRaw: String? = nil,
+        formatRaw: String? = nil,
+        teamIDs: [UUID] = []
+    ) {
         self.id = id
         self.officialName = officialName
+        self.year = year
+        self.logoPath = logoPath
+        self.variantRaw = variantRaw
+        self.formatRaw = formatRaw
+        self.teamIDs = teamIDs
     }
 }
 
