@@ -177,25 +177,14 @@ struct TeamListView: View {
                     description: Text("右上の＋からチームを追加します。")
                 )
             } else {
-                ForEach(teams) { team in
-                    NavigationLink {
-                        TeamEditorView(team: team)
-                    } label: {
-                        HStack(spacing: 12) {
-                            teamListThumbnail(for: team)
-                            VStack(alignment: .leading, spacing: 3) {
-                                Text(team.name)
-                                    .font(.headline)
-                                Text("選手名簿とチームデザイン")
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                            }
+                // カテゴリー(フォルダ)ごとにまとめて表示。未分類は最後。
+                ForEach(groupedTeams, id: \.category) { group in
+                    Section {
+                        ForEach(group.teams) { team in
+                            teamRow(team)
                         }
-                    }
-                    .swipeActions(edge: .trailing, allowsFullSwipe: false) {
-                        Button("削除", role: .destructive) {
-                            requestDeletion(of: team)
-                        }
+                    } header: {
+                        Label("\(group.displayName)（\(group.teams.count)）", systemImage: "folder.fill")
                     }
                 }
             }
@@ -242,6 +231,51 @@ struct TeamListView: View {
             }
         } message: { team in
             Text("「\(team.name)」は試合で使われているため削除できません。先に該当する試合を削除してください。")
+        }
+    }
+
+    // 未分類は "" キーにまとめ、常に一番下へ。それ以外は名前順。
+    private static let uncategorizedKey = ""
+
+    private var groupedTeams: [(category: String, displayName: String, teams: [Team])] {
+        let grouped = Dictionary(grouping: teams) { team -> String in
+            let trimmed = (team.category ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            return trimmed.isEmpty ? Self.uncategorizedKey : trimmed
+        }
+        return grouped.keys
+            .sorted { lhs, rhs in
+                if lhs == Self.uncategorizedKey { return false }
+                if rhs == Self.uncategorizedKey { return true }
+                return lhs < rhs
+            }
+            .map { key in
+                (
+                    category: key,
+                    displayName: key == Self.uncategorizedKey ? "未分類" : key,
+                    teams: (grouped[key] ?? []).sorted { $0.name < $1.name }
+                )
+            }
+    }
+
+    private func teamRow(_ team: Team) -> some View {
+        NavigationLink {
+            TeamEditorView(team: team)
+        } label: {
+            HStack(spacing: 12) {
+                teamListThumbnail(for: team)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(team.name)
+                        .font(.headline)
+                    Text("選手名簿とチームデザイン")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
+        .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+            Button("削除", role: .destructive) {
+                requestDeletion(of: team)
+            }
         }
     }
 
@@ -327,6 +361,7 @@ struct TeamEditorView: View {
     @Environment(\.modelContext) private var modelContext
     @Bindable var team: Team
     @Query(sort: \Player.number) private var allPlayers: [Player]
+    @Query private var allTeams: [Team]
 
     @State private var logoPickerItem: PhotosPickerItem?
     @State private var isShowingLogoDeleteConfirmation = false
@@ -335,6 +370,8 @@ struct TeamEditorView: View {
     @State private var playerPendingDeletion: Player?
     @State private var deletionBlockedPlayer: Player?
     @State private var isShowingBulkKanaSheet = false
+    @State private var isEditingCategory = false
+    @State private var categoryDraft = ""
 
     private let columns = Array(repeating: GridItem(.flexible(), spacing: 8), count: 3)
 
@@ -386,6 +423,7 @@ struct TeamEditorView: View {
                 VStack(spacing: 18) {
                     teamIdentityCard
                     colorSelectionCard
+                    categoryCard
                     rosterSection
                 }
                 .padding(.horizontal, 16)
@@ -581,6 +619,97 @@ struct TeamEditorView: View {
                 RoundedRectangle(cornerRadius: 20)
                     .stroke(accent.opacity(0.48), lineWidth: 1)
             )
+        }
+        .buttonStyle(.plain)
+    }
+
+    // チーム一覧のフォルダ分けに使うカテゴリー。自由入力。
+    // 既存のカテゴリーはワンタップで選べるチップにしておく。
+    private var categoryCard: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Label("カテゴリー（フォルダ）", systemImage: "folder")
+                    .font(.headline.weight(.black))
+                    .foregroundStyle(accent)
+                Spacer()
+                Text(currentCategoryLabel)
+                    .font(.subheadline.weight(.bold))
+                    .foregroundStyle(.white.opacity(0.8))
+            }
+
+            // 既存カテゴリーのチップ + 「＋新規」
+            let existing = existingCategories
+            if !existing.isEmpty {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 8) {
+                        ForEach(existing, id: \.self) { name in
+                            categoryChip(name, isSelected: (team.category ?? "") == name) {
+                                team.category = name
+                                try? modelContext.save()
+                            }
+                        }
+                    }
+                }
+            }
+
+            HStack(spacing: 8) {
+                categoryChip("＋ 新規/変更", isSelected: false) {
+                    categoryDraft = team.category ?? ""
+                    isEditingCategory = true
+                }
+                if team.category?.isEmpty == false {
+                    categoryChip("未分類にする", isSelected: false) {
+                        team.category = nil
+                        try? modelContext.save()
+                    }
+                }
+            }
+
+            Text("チーム一覧が「男子」「女子」などのフォルダで整理されます。空欄なら「未分類」になります。")
+                .font(.caption)
+                .foregroundStyle(.white.opacity(0.45))
+        }
+        .padding(18)
+        .background(Color.white.opacity(0.055))
+        .clipShape(RoundedRectangle(cornerRadius: 20))
+        .overlay(
+            RoundedRectangle(cornerRadius: 20)
+                .stroke(accent.opacity(0.48), lineWidth: 1)
+        )
+        .alert("カテゴリー名", isPresented: $isEditingCategory) {
+            TextField("例: 男子 / 女子 / 大学", text: $categoryDraft)
+            Button("保存") {
+                let trimmed = categoryDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+                team.category = trimmed.isEmpty ? nil : trimmed
+                try? modelContext.save()
+            }
+            Button("キャンセル", role: .cancel) {}
+        }
+    }
+
+    private var currentCategoryLabel: String {
+        let trimmed = (team.category ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? "未分類" : trimmed
+    }
+
+    private var existingCategories: [String] {
+        let names = allTeams.compactMap { team -> String? in
+            let trimmed = (team.category ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            return trimmed.isEmpty ? nil : trimmed
+        }
+        return Array(Set(names)).sorted()
+    }
+
+    private func categoryChip(_ title: String, isSelected: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Text(title)
+                .font(.subheadline.weight(.bold))
+                .foregroundStyle(isSelected ? .white : .white.opacity(0.7))
+                .padding(.horizontal, 12)
+                .padding(.vertical, 7)
+                .background(isSelected ? accent : Color.white.opacity(0.08))
+                .clipShape(Capsule())
+                .overlay(Capsule().stroke(isSelected ? accent : Color.white.opacity(0.16), lineWidth: 1))
         }
         .buttonStyle(.plain)
     }
