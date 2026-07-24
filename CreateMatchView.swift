@@ -28,6 +28,7 @@ struct CreateMatchView: View {
     @State private var alertTitle = ""
     @State private var alertMessage: String?
     @State private var recordingMatch: Match?
+    @State private var quickResultMatch: Match?
 
     var body: some View {
         Form {
@@ -66,12 +67,21 @@ struct CreateMatchView: View {
 
             Section {
                 Button("保存") {
-                    saveMatch(shouldStartRecording: false)
+                    saveMatch(then: .close)
                 }
                 .disabled(!canSave)
 
-                Button("保存して記録開始") {
-                    saveMatch(shouldStartRecording: true)
+                Button("保存して記録開始（詳細）") {
+                    saveMatch(then: .detailedRecording)
+                }
+                .disabled(!canSave)
+            } footer: {
+                Text("「詳細」はポゼッションなども計測する記録画面へ、「結果だけ入力」は得点経過だけを手早く登録します（あとでどちらも追記できます）。")
+            }
+
+            Section {
+                Button("保存して結果だけ入力（簡易）") {
+                    saveMatch(then: .quickResult)
                 }
                 .disabled(!canSave)
             }
@@ -99,6 +109,16 @@ struct CreateMatchView: View {
             // この画面の「保存」で V3RecordingView へ遷移する。
             LineupRegistrationView(match: match)
         }
+        .navigationDestination(item: $quickResultMatch) { match in
+            QuickResultEntryView(match: match)
+        }
+    }
+
+    // 保存後の遷移先
+    private enum SaveDestination {
+        case close
+        case detailedRecording
+        case quickResult
     }
 
     // 設定の自チーム名をホームチームに最初から入れておく(毎回入力させない)。
@@ -150,7 +170,7 @@ struct CreateMatchView: View {
         )
     }
 
-    private func saveMatch(shouldStartRecording: Bool) {
+    private func saveMatch(then destination: SaveDestination) {
         guard canSave else {
             showAlert(title: "保存できませんでした", message: "大会、ホームチーム、アウェイチームを入力してください。")
             return
@@ -176,10 +196,13 @@ struct CreateMatchView: View {
 
         do {
             try modelContext.save()
-            if shouldStartRecording {
-                recordingMatch = match
-            } else {
+            switch destination {
+            case .close:
                 dismiss()
+            case .detailedRecording:
+                recordingMatch = match
+            case .quickResult:
+                quickResultMatch = match
             }
         } catch {
             showAlert(title: "保存できませんでした", message: "保存中にエラーが起きました。")

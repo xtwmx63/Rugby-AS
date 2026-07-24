@@ -24,6 +24,7 @@ struct MatchSummaryView: View {
     @State private var scoringEventForPlayerSelection: StatEvent?
     @State private var isRecordingPresented = false
     @State private var isTimelineEditorPresented = false
+    @State private var isQuickResultPresented = false
     @State private var selectedScope: SummaryScope = .all
     // 得点経過チャートで選択中の得点(タップで吹き出し表示)
     @State private var selectedProgressionEventID: UUID?
@@ -256,6 +257,11 @@ struct MatchSummaryView: View {
                 SummaryImageShareSheet(image: exportedSummaryImage, title: summaryImageTitle)
             }
         }
+        .sheet(isPresented: $isQuickResultPresented) {
+            NavigationStack {
+                QuickResultEntryView(match: match)
+            }
+        }
     }
 
     // MARK: - Main layout
@@ -297,6 +303,21 @@ struct MatchSummaryView: View {
 
                 HStack(spacing: 8) {
                     Button {
+                        isQuickResultPresented = true
+                    } label: {
+                        Text("得点")
+                            .font(.subheadline.weight(.bold))
+                            .foregroundStyle(.white)
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.8)
+                            .frame(width: 50, height: 44)
+                            .background(Color.green)
+                            .clipShape(Capsule())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("得点を入力")
+
+                    Button {
                         isTimelineEditorPresented = true
                     } label: {
                         Text("編集")
@@ -304,7 +325,7 @@ struct MatchSummaryView: View {
                             .foregroundStyle(.white)
                             .lineLimit(1)
                             .minimumScaleFactor(0.8)
-                            .frame(width: 54, height: 44)
+                            .frame(width: 50, height: 44)
                             .background(Color.blue)
                             .clipShape(Capsule())
                     }

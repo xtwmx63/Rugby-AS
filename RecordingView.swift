@@ -524,7 +524,7 @@ private enum PossessionSide: String {
     case opponent
 }
 
-enum ScoringCategory: String {
+enum ScoringCategory: String, CaseIterable {
     case tryScore = "try"
     case conversion = "conversion"
     case penaltyGoal = "penalty_goal"
@@ -540,6 +540,15 @@ enum ScoringCategory: String {
             return "PG"
         case .dropGoal:
             return "DG"
+        }
+    }
+
+    // 得点(成功時)。得点計算はこの1箇所を正とする。
+    var points: Int {
+        switch self {
+        case .tryScore: return 5
+        case .conversion: return 2
+        case .penaltyGoal, .dropGoal: return 3
         }
     }
 
