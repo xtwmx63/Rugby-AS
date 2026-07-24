@@ -22,6 +22,7 @@ struct MatchSummaryView: View {
     let match: Match
 
     @State private var scoringEventForPlayerSelection: StatEvent?
+    @State private var timeEditingEvent: StatEvent?
     @State private var isRecordingPresented = false
     @State private var isTimelineEditorPresented = false
     @State private var selectedScope: SummaryScope = .all
@@ -247,6 +248,13 @@ struct MatchSummaryView: View {
                 scoringEventForPlayerSelection = nil
             }
             .presentationDetents([.medium, .large])
+        }
+        .sheet(item: $timeEditingEvent) { event in
+            ScoreTimeEditSheet(event: event) {
+                try? modelContext.save()
+                timeEditingEvent = nil
+            }
+            .presentationDetents([.height(300), .medium])
         }
         .sheet(isPresented: Binding(
             get: { exportedSummaryImage != nil },
@@ -1592,6 +1600,12 @@ struct MatchSummaryView: View {
             } label: {
                 Label("削除", systemImage: "trash")
             }
+            Button {
+                timeEditingEvent = event
+            } label: {
+                Label("時刻", systemImage: "clock")
+            }
+            .tint(.blue)
         }
     }
 
@@ -1812,6 +1826,80 @@ private struct SummaryImageShareSheet: View {
                         item: Image(uiImage: image),
                         preview: SharePreview(title, image: Image(uiImage: image))
                     )
+                }
+            }
+        }
+    }
+}
+
+// 得点の時刻(前後半・分・秒)を手動で修正するシート。
+// 得点経過リストの各行を左スワイプ→「時刻」で開く。
+private struct ScoreTimeEditSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    @Bindable var event: StatEvent
+    let onSave: () -> Void
+
+    @State private var half: Int
+    @State private var minute: Int
+    @State private var second: Int
+
+    init(event: StatEvent, onSave: @escaping () -> Void) {
+        self._event = Bindable(wrappedValue: event)
+        self.onSave = onSave
+        let total = max(0, event.seconds)
+        self._half = State(initialValue: event.half >= 1 ? 1 : 0)
+        self._minute = State(initialValue: total / 60)
+        self._second = State(initialValue: total % 60)
+    }
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section("前半 / 後半") {
+                    Picker("ハーフ", selection: $half) {
+                        Text("前半").tag(0)
+                        Text("後半").tag(1)
+                    }
+                    .pickerStyle(.segmented)
+                }
+
+                Section("時刻") {
+                    Stepper(value: $minute, in: 0...200) {
+                        HStack {
+                            Text("分")
+                            Spacer()
+                            Text("\(minute)").monospacedDigit().foregroundStyle(.secondary)
+                        }
+                    }
+                    Stepper(value: $second, in: 0...59) {
+                        HStack {
+                            Text("秒")
+                            Spacer()
+                            Text(String(format: "%02d", second)).monospacedDigit().foregroundStyle(.secondary)
+                        }
+                    }
+                    HStack {
+                        Text("表示")
+                        Spacer()
+                        Text("\(half == 1 ? "後半" : "前半") \(minute):\(String(format: "%02d", second))")
+                            .monospacedDigit()
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            }
+            .navigationTitle("得点の時刻")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("キャンセル") { dismiss() }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("保存") {
+                        event.half = half
+                        event.seconds = minute * 60 + second
+                        onSave()
+                    }
+                    .fontWeight(.bold)
                 }
             }
         }
