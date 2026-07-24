@@ -1536,76 +1536,88 @@ struct MatchSummaryView: View {
         // 失敗したキック(CON/PG/DG)はチップを薄くして✕印を付ける
         let isFailed = event.outcome == "fail"
 
-        return Button {
-            scoringEventForPlayerSelection = event
-        } label: {
-            HStack(spacing: 8) {
-                // 失敗した行は✕バッジ以外を全体的に薄くして、成功行と一目で区別する
+        return HStack(spacing: 8) {
+            // 時刻だけ独立したボタン。タップで時刻の修正シートを開く
+            // (行の他の場所をタップすると従来どおり得点者の選択)。
+            Button {
+                timeEditingEvent = event
+            } label: {
                 Text(timeText(event.seconds))
                     .font(.callout.monospacedDigit())
                     .foregroundStyle(.white.opacity(0.55))
+                    // タップできる場所だと分かるよう、控えめな下線を敷く
+                    .overlay(alignment: .bottom) {
+                        Rectangle()
+                            .fill(Color.white.opacity(0.22))
+                            .frame(height: 1)
+                            .offset(y: 2)
+                    }
                     .frame(width: 46, alignment: .leading)
-                    .opacity(isFailed ? 0.45 : 1.0)
-
-                Text(categoryTag(event.category))
-                    .font(.callout.weight(.black))
-                    .frame(width: 46)
                     .padding(.vertical, 6)
-                    .background(categoryColor(event.category).opacity(isFailed ? 0.08 : 0.18))
-                    .foregroundStyle(categoryColor(event.category).opacity(isFailed ? 0.45 : 1.0))
-                    .clipShape(RoundedRectangle(cornerRadius: 7))
-                    .overlay(alignment: .topTrailing) {
-                        if isFailed {
-                            Image(systemName: "xmark.circle.fill")
-                                .font(.system(size: 13, weight: .bold))
-                                .foregroundStyle(.orange)
-                                .background(Circle().fill(Color(red: 0.03, green: 0.07, blue: 0.12)))
-                                .offset(x: 5, y: -5)
+                    .opacity(isFailed ? 0.45 : 1.0)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("時刻を修正")
+
+            Button {
+                scoringEventForPlayerSelection = event
+            } label: {
+                HStack(spacing: 8) {
+                    Text(categoryTag(event.category))
+                        .font(.callout.weight(.black))
+                        .frame(width: 46)
+                        .padding(.vertical, 6)
+                        .background(categoryColor(event.category).opacity(isFailed ? 0.08 : 0.18))
+                        .foregroundStyle(categoryColor(event.category).opacity(isFailed ? 0.45 : 1.0))
+                        .clipShape(RoundedRectangle(cornerRadius: 7))
+                        .overlay(alignment: .topTrailing) {
+                            if isFailed {
+                                Image(systemName: "xmark.circle.fill")
+                                    .font(.system(size: 13, weight: .bold))
+                                    .foregroundStyle(.orange)
+                                    .background(Circle().fill(Color(red: 0.03, green: 0.07, blue: 0.12)))
+                                    .offset(x: 5, y: -5)
+                            }
+                        }
+
+                    playerAvatar(playerID: event.playerID, accent: teamAccent, size: 30)
+                        .opacity(isFailed ? 0.45 : 1.0)
+
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(playerName(for: event.playerID))
+                            .font(.headline)
+                            .foregroundStyle(event.playerID == nil ? .orange : .white)
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.6)
+
+                        if let originName = PlayOrigin.displayName(for: event.origin) {
+                            Text("起点: \(originName)")
+                                .font(.caption2.weight(.bold))
+                                .foregroundStyle(.teal)
+                                .lineLimit(1)
                         }
                     }
-
-                playerAvatar(playerID: event.playerID, accent: teamAccent, size: 30)
                     .opacity(isFailed ? 0.45 : 1.0)
 
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(playerName(for: event.playerID))
-                        .font(.headline)
-                        .foregroundStyle(event.playerID == nil ? .orange : .white)
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.6)
+                    Spacer(minLength: 4)
 
-                    if let originName = PlayOrigin.displayName(for: event.origin) {
-                        Text("起点: \(originName)")
-                            .font(.caption2.weight(.bold))
-                            .foregroundStyle(.teal)
-                            .lineLimit(1)
-                    }
+                    Text("\(progression.home) - \(progression.away)")
+                        .font(.headline.weight(.black).monospacedDigit())
+                        .foregroundStyle(.white)
+                        .opacity(isFailed ? 0.45 : 1.0)
                 }
-                .opacity(isFailed ? 0.45 : 1.0)
-
-                Spacer(minLength: 4)
-
-                Text("\(progression.home) - \(progression.away)")
-                    .font(.headline.weight(.black).monospacedDigit())
-                    .foregroundStyle(.white)
-                    .opacity(isFailed ? 0.45 : 1.0)
+                .contentShape(Rectangle())
             }
-            .padding(.vertical, 4)
-            .contentShape(Rectangle())
+            .buttonStyle(.plain)
         }
-        .buttonStyle(.plain)
+        .padding(.vertical, 4)
         .swipeActions {
             Button(role: .destructive) {
                 deleteEvent(event)
             } label: {
                 Label("削除", systemImage: "trash")
             }
-            Button {
-                timeEditingEvent = event
-            } label: {
-                Label("時刻", systemImage: "clock")
-            }
-            .tint(.blue)
         }
     }
 
